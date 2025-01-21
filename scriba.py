@@ -84,13 +84,11 @@ class Envoicer:
         self.recording_enabled = True
         self.sent_sentences = set()  # Track sent sentences
         
-        # Initialize system tray icon and notifications
-        from icon_manager import IconManager
-        from notification_manager import NotificationManager
-        self.icon_manager = IconManager(self.toggle_recording)
-        self.notification_manager = NotificationManager()
-        self.icon_manager.start()
-        self.notification_manager.show_notification(
+        # Initialize GUI
+        from gui import GUI
+        self.gui = GUI(self.toggle_recording)
+        self.gui.start()
+        self.gui.show_notification(
             "Envoicer Started",
             "Ready to transcribe audio"
         )
@@ -237,8 +235,8 @@ class Envoicer:
                             if not voice_active:
                                 logging.info("Voice activity detected")
                                 voice_active = True
-                                self.icon_manager.set_state('active')
-                                self.notification_manager.show_notification(
+                                self.gui.set_state('active')
+                                self.gui.show_notification(
                                     "Voice Detected",
                                     "Started transcribing audio",
                                     duration=2
@@ -460,8 +458,8 @@ class Envoicer:
         """Toggle recording state when icon is clicked"""
         self.recording_enabled = not self.recording_enabled
         state = 'ready' if self.recording_enabled else 'disabled'
-        self.icon_manager.set_state(state)
-        self.notification_manager.show_notification(
+        self.gui.set_state(state)
+        self.gui.show_notification(
             "Recording Status",
             f"Recording {state}",
             duration=2
@@ -473,7 +471,7 @@ class Envoicer:
         loop = asyncio.get_event_loop()
         if loop.is_running():
             loop.create_task(self.cleanup())
-        self.icon_manager.stop()
+        self.gui.stop()
         print("\nEnvoicer stopped.")
 
 def main():
