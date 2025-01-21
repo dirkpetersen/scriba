@@ -247,7 +247,7 @@ class Envoicer:
                                 logging.info("Voice activity stopped")
                                 voice_active = False
                                 silence_frames = 0
-                                self.icon_manager.set_state('ready')
+                                self.gui.set_state('ready')
                         
                         # Send audio if we're in a billable minute
                         if self._in_billable_minute:
