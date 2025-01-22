@@ -16,10 +16,6 @@ from gui import GUI
 
 user32 = ctypes.WinDLL('user32', use_last_error=True)
 
-# Declare SendInput function parameters and return type
-user32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
-user32.SendInput.restype = wintypes.UINT
-
 LOGLEVEL=logging.INFO # logging.INFO or logging.DEBUG
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
@@ -55,6 +51,10 @@ class INPUT(ctypes.Structure):
     _anonymous_ = ("_input",)
     _fields_ = (("type",   wintypes.DWORD),
                 ("_input", _INPUT))
+
+# Declare SendInput function parameters and return type
+user32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
+user32.SendInput.restype = wintypes.UINT
 
 class Scriba:
 
