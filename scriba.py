@@ -16,7 +16,7 @@ from gui import GUI
 
 user32 = ctypes.WinDLL('user32', use_last_error=True)
 
-LOGLEVEL=logging.DEBUG # logging.INFO or logging.DEBUG
+LOGLEVEL=logging.INFO # logging.INFO or logging.DEBUG
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 
@@ -69,12 +69,15 @@ class Scriba:
         self._in_billable_minute = False
         
         # Configure logging
+        # Configure logging
         logging.basicConfig(
             stream=sys.stderr,
-            level=LOGLEVEL,  # Change to INFO level to reduce debug messages
+            level=LOGLEVEL,
             format='%(asctime)s.%(msecs)03d %(levelname)s: %(message)s',
             datefmt='%H:%M:%S'
         )
+        # Suppress websockets debug logging
+        logging.getLogger('websockets').setLevel(logging.INFO)
         
         # Audio settings following AWS best practices
         self.CHANNELS = 1
