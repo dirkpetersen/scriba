@@ -16,6 +16,10 @@ from gui import GUI
 
 user32 = ctypes.WinDLL('user32', use_last_error=True)
 
+# Declare SendInput function parameters and return type
+user32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
+user32.SendInput.restype = wintypes.UINT
+
 LOGLEVEL=logging.INFO # logging.INFO or logging.DEBUG
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
@@ -165,7 +169,9 @@ class Scriba:
                 # Send inputs
                 num_inputs = len(inputs)
                 input_array = (INPUT * num_inputs)(*inputs)
-                user32.SendInput(num_inputs, input_array, ctypes.sizeof(INPUT))
+                result = user32.SendInput(num_inputs, input_array, ctypes.sizeof(INPUT))
+                if result != num_inputs:
+                    logging.warning(f"SendInput failed: only {result}/{num_inputs} inputs were sent")
                 time.sleep(0.005)  # Smaller delay since SendInput is more reliable
                 
             window_title = win32gui.GetWindowText(hwnd)
