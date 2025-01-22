@@ -2,13 +2,11 @@ from PIL import Image, ImageDraw
 import pystray
 import threading
 import logging
-from win10toast import ToastNotifier
 
 class GUI:
     def __init__(self, on_click_callback=None):
         self.icon = None
         self.on_click_callback = on_click_callback
-        self.toaster = ToastNotifier()
         self._create_icon()
         
     def _create_base_image(self, color):
@@ -75,15 +73,7 @@ class GUI:
     def show_notification(self, title, message, duration=3):
         """Show a Windows notification"""
         try:
-            # Run toast in a separate thread to avoid blocking
-            threading.Thread(
-                target=self.toaster.show_toast,
-                args=(title, message),
-                kwargs={
-                    'duration': duration,
-                    'threaded': True
-                },
-                daemon=True
-            ).start()
+            if self.icon:
+                self.icon.notify(message, title)
         except Exception as e:
             logging.error(f"Failed to show notification: {e}")
