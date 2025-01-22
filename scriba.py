@@ -501,11 +501,16 @@ class Scriba:
         
     def stop(self):
         """Stop the voice transcription service"""
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(self.cleanup())
-        self.gui.stop()
-        print("\nScriba stopped.")
+        try:
+            # Create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            # Run cleanup synchronously since we're shutting down
+            loop.run_until_complete(self.cleanup())
+        finally:
+            loop.close()
+            self.gui.stop()
+            print("\nScriba stopped.")
 
 def main():
     def signal_handler(signum, frame):
