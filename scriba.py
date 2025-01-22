@@ -131,15 +131,21 @@ class Scriba:
             return False
             
         try:
+            logging.debug(f"Active window handle: {hwnd}")
+            window_title = win32gui.GetWindowText(hwnd)
+            window_class = win32gui.GetClassName(hwnd)
+            logging.debug(f"Window title: '{window_title}', class: '{window_class}'")
 
             # Send each character
             for char in text:
                 vk = win32api.VkKeyScan(char)
                 if vk == -1:
+                    logging.debug(f"No virtual key code found for character: {char!r}")
                     continue
                     
                 vk_code = vk & 0xFF
                 shift_state = (vk >> 8) & 0xFF
+                logging.debug(f"Character {char!r}: vk_code=0x{vk_code:02x}, shift_state=0x{shift_state:02x}")
                 
                 inputs = []
                 
@@ -170,10 +176,15 @@ class Scriba:
                 # Send inputs
                 num_inputs = len(inputs)
                 input_array = (INPUT * num_inputs)(*inputs)
+                logging.debug(f"Sending {num_inputs} inputs")
+                for i, inp in enumerate(inputs):
+                    logging.debug(f"Input {i}: type={inp.type}, vk={inp.ki.wVk}, flags={inp.ki.dwFlags}")
                 result = user32.SendInput(ctypes.c_uint(num_inputs), input_array, ctypes.sizeof(INPUT))
                 if result != num_inputs:
                     error = ctypes.get_last_error()
-                    logging.warning(f"SendInput failed: only {result}/{num_inputs} inputs were sent (error: {error})")
+                    error_msg = f"SendInput failed: only {result}/{num_inputs} inputs were sent (error: {error})"
+                    logging.error(error_msg)
+                    raise ctypes.WinError(error)
                 time.sleep(0.005)  # Smaller delay since SendInput is more reliable
                 
             window_title = win32gui.GetWindowText(hwnd)
