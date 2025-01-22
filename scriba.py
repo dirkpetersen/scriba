@@ -16,7 +16,7 @@ from gui import GUI
 
 user32 = ctypes.WinDLL('user32', use_last_error=True)
 
-LOGLEVEL=logging.INFO # logging.INFO or logging.DEBUG
+LOGLEVEL=logging.DEBUG # logging.INFO or logging.DEBUG
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 
