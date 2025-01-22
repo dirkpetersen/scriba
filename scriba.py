@@ -21,7 +21,8 @@ INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 
 # C struct definitions
-wintypes.ULONG_PTR = wintypes.WPARAM
+if not hasattr(wintypes, 'ULONG_PTR'):
+    wintypes.ULONG_PTR = wintypes.WPARAM if hasattr(wintypes, 'WPARAM') else ctypes.c_size_t
 
 class MOUSEINPUT(ctypes.Structure):
     _fields_ = (("dx",          wintypes.LONG),
@@ -169,9 +170,10 @@ class Scriba:
                 # Send inputs
                 num_inputs = len(inputs)
                 input_array = (INPUT * num_inputs)(*inputs)
-                result = user32.SendInput(num_inputs, input_array, ctypes.sizeof(INPUT))
+                result = user32.SendInput(ctypes.c_uint(num_inputs), input_array, ctypes.sizeof(INPUT))
                 if result != num_inputs:
-                    logging.warning(f"SendInput failed: only {result}/{num_inputs} inputs were sent")
+                    error = ctypes.get_last_error()
+                    logging.warning(f"SendInput failed: only {result}/{num_inputs} inputs were sent (error: {error})")
                 time.sleep(0.005)  # Smaller delay since SendInput is more reliable
                 
             window_title = win32gui.GetWindowText(hwnd)
