@@ -64,8 +64,6 @@ class Scriba:
         # Global transcript state
         self._current_transcript = ""
         self._last_printed_text = ""
-        self._last_activity_time = time.time()
-        self._timeout_threshold = 15  # 15 seconds timeout
         
         # AWS Transcribe billing optimization
         self._minute_start_time = 0
@@ -290,10 +288,6 @@ class Scriba:
                                 silence_frames = 0
                                 self.gui.set_state('ready')
                             
-                            # Check for timeout
-                            if time.time() - self._last_activity_time > self._timeout_threshold:
-                                logging.info("Connection timeout detected")
-                                self.gui.set_state('timeout')
                         
                         # Send audio if we're in a billable minute
                         if self._in_billable_minute:
@@ -339,7 +333,11 @@ class Scriba:
                 header, payload = decode_event(response)
 
                 if header[":message-type"] == 'exception':
-                    logging.error(payload['Message'])
+                    error_msg = payload['Message']
+                    logging.error(error_msg)
+                    if "Your request timed out because no new audio was received" in error_msg:
+                        logging.info("AWS Transcribe timeout detected")
+                        self.gui.set_state('timeout')
                     continue
                 
                 if header[':message-type'] != 'event':
