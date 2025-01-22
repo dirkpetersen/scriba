@@ -28,9 +28,9 @@ class GUI:
                 self.on_click_callback()
         
         self.icon = pystray.Icon(
-            name='envoicer',
+            name='scriba',
             icon=image,
-            title="Envoicer (Ready)",
+            title="Scriba (Ready)",
             menu=pystray.Menu(
                 pystray.MenuItem(
                     text="Toggle Recording",
@@ -58,9 +58,9 @@ class GUI:
             'disabled': 'red'
         }
         tooltips = {
-            'ready': 'Envoicer (Ready)',
-            'active': 'Envoicer (Active)',
-            'disabled': 'Envoicer (Disabled)'
+            'ready': 'Scriba (Ready)',
+            'active': 'Scriba (Active)',
+            'disabled': 'Scriba (Disabled)'
         }
         
         if state in colors:
