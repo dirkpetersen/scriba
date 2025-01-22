@@ -12,6 +12,7 @@ from ctypes import wintypes
 import time
 from presigned_url import AWSTranscribePresignedURL
 from eventstream import create_audio_event, decode_event
+from gui import GUI
 
 user32 = ctypes.WinDLL('user32', use_last_error=True)
 
@@ -51,7 +52,7 @@ class INPUT(ctypes.Structure):
     _fields_ = (("type",   wintypes.DWORD),
                 ("_input", _INPUT))
 
-class Envoicer:
+class Scriba:
 
     def __init__(self):
         # Global transcript state
@@ -84,12 +85,11 @@ class Envoicer:
         self.recording_enabled = True
         self.sent_sentences = set()  # Track sent sentences
         
-        # Initialize GUI
-        from gui import GUI
+        # Initialize GUI        
         self.gui = GUI(self.toggle_recording)
         self.gui.start()
         self.gui.show_notification(
-            "Envoicer Started",
+            "Scriba Started",
             "Ready to transcribe audio"
         )
         self.silence_threshold = 300  # Lower threshold for audio activity
@@ -419,7 +419,7 @@ class Envoicer:
         
         def stop_app():
             if self.running:
-                print("\nStopping Envoicer...")
+                print("\nStopping Scriba...")
                 logging.info("Initiating shutdown sequence")
                 self.running = False
                 # Schedule cleanup in the event loop
@@ -429,7 +429,7 @@ class Envoicer:
             # Register hotkey to stop the service
             keyboard.add_hotkey('ctrl+shift+x', stop_app)
             
-            print("\nEnvoicer started. Press Ctrl+Shift+X to stop.")
+            print("\nScriba started. Press Ctrl+Shift+X to stop.")
             print("Listening for audio input...")
             
             try:
@@ -452,7 +452,7 @@ class Envoicer:
             finally:
                 logging.info("Closing event loop")
                 loop.close()
-                print("Envoicer shutdown complete.")
+                print("Scriba shutdown complete.")
     
     def toggle_recording(self):
         """Toggle recording state when icon is clicked"""
@@ -472,18 +472,18 @@ class Envoicer:
         if loop.is_running():
             loop.create_task(self.cleanup())
         self.gui.stop()
-        print("\nEnvoicer stopped.")
+        print("\nScriba stopped.")
 
 def main():
     def signal_handler(signum, frame):
-        print("\nPlease use Ctrl+Shift+X to stop Envoicer properly.")
+        print("\nPlease use Ctrl+Shift+X to stop Scriba properly.")
         print("Continuing...")
         
     import signal
     signal.signal(signal.SIGINT, signal_handler)
     
-    envoicer = Envoicer()
-    envoicer.start()
+    scriba = Scriba()
+    scriba.start()
 
 if __name__ == "__main__":
     main()
