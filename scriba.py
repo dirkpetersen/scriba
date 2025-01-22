@@ -316,6 +316,8 @@ class Scriba:
         try:
             # Insert a space after punctuation if not already present
             sendtext = re.sub(r'([.?!])(?![\s"])', r'\1 ', text)
+            # Remove filler words like 'um', 'uh', 'oh'
+            sendtext = re.sub(r' (oh|uh|um|ah),', '', text, flags=re.IGNORECASE)
             if is_partial:
                 logging.debug(f"Partial: {text}")
             else:
@@ -354,7 +356,7 @@ class Scriba:
                 await asyncio.sleep(0)
                 
             except websockets.exceptions.ConnectionClosedOK:
-                logging.info("Streaming completed successfully - reconnecting...")
+                logging.info("Streaming completed successfully - waiting ...")
                 break
                 
             except websockets.exceptions.ConnectionClosedError:
