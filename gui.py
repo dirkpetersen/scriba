@@ -4,9 +4,10 @@ import threading
 import logging
 
 class GUI:
-    def __init__(self, on_click_callback=None):
+    def __init__(self, on_click_callback=None, on_exit_callback=None):
         self.icon = None
         self.on_click_callback = on_click_callback
+        self.on_exit_callback = on_exit_callback
         self._create_icon()
         
     def _create_base_image(self, color):
@@ -29,10 +30,9 @@ class GUI:
                 
         def exit_handler(icon, item):
             """Handle exit menu clicks"""
+            if self.on_exit_callback:
+                self.on_exit_callback()
             icon.stop()
-            # Force Python to exit since icon runs in daemon thread
-            import os
-            os._exit(0)
         
         self.icon = pystray.Icon(
             name='scriba',

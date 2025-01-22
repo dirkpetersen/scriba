@@ -95,7 +95,7 @@ class Scriba:
         self.sent_sentences = set()  # Track sent sentences
         
         # Initialize GUI        
-        self.gui = GUI(self.toggle_recording)
+        self.gui = GUI(self.toggle_recording, self.stop)
         self.gui.start()
         self.gui.show_notification(
             "Scriba Started",
