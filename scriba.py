@@ -131,10 +131,11 @@ class Scriba:
             return False
             
         try:
-            logging.debug(f"Active window handle: {hwnd}")
+            logging.debug(f"Active window handle: 0x{hwnd:08x}")
             window_title = win32gui.GetWindowText(hwnd)
             window_class = win32gui.GetClassName(hwnd)
-            logging.debug(f"Window title: '{window_title}', class: '{window_class}'")
+            window_thread = win32gui.GetWindowThreadProcessId(hwnd)[0]
+            logging.debug(f"Window title: '{window_title}', class: '{window_class}', thread: {window_thread}")
 
             # Send each character
             for char in text:
@@ -178,13 +179,22 @@ class Scriba:
                 input_array = (INPUT * num_inputs)(*inputs)
                 logging.debug(f"Sending {num_inputs} inputs")
                 for i, inp in enumerate(inputs):
-                    logging.debug(f"Input {i}: type={inp.type}, vk={inp.ki.wVk}, flags={inp.ki.dwFlags}")
-                result = user32.SendInput(ctypes.c_uint(num_inputs), input_array, ctypes.sizeof(INPUT))
+                    logging.debug(f"Input {i}: type={inp.type}, vk=0x{inp.ki.wVk:02x}, "
+                                f"scan=0x{inp.ki.wScan:02x}, flags=0x{inp.ki.dwFlags:08x}, "
+                                f"time={inp.ki.time}, extra=0x{inp.ki.dwExtraInfo:016x}")
+                
+                # Ensure all parameters are properly typed
+                c_num_inputs = ctypes.c_uint(num_inputs)
+                c_size = ctypes.c_int(ctypes.sizeof(INPUT))
+                
+                result = user32.SendInput(c_num_inputs, input_array, c_size)
                 if result != num_inputs:
                     error = ctypes.get_last_error()
-                    error_msg = f"SendInput failed: only {result}/{num_inputs} inputs were sent (error: {error})"
+                    error_msg = (f"SendInput failed: only {result}/{num_inputs} inputs were sent "
+                               f"(error: {error}, {ctypes.FormatError(error)})")
                     logging.error(error_msg)
                     raise ctypes.WinError(error)
+                logging.debug(f"SendInput succeeded: sent {result}/{num_inputs} inputs")
                 time.sleep(0.005)  # Smaller delay since SendInput is more reliable
                 
             window_title = win32gui.GetWindowText(hwnd)
