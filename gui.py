@@ -66,12 +66,14 @@ class GUI:
         colors = {
             'ready': 'yellow',
             'active': 'green',
-            'disabled': 'red'
+            'disabled': 'red',
+            'timeout': 'orange'
         }
         tooltips = {
             'ready': 'Scriba (Ready)',
-            'active': 'Scriba (Active)',
-            'disabled': 'Scriba (Disabled)'
+            'active': 'Scriba (Active)', 
+            'disabled': 'Scriba (Disabled)',
+            'timeout': 'Scriba (Connection Timeout)'
         }
         
         if state in colors:
