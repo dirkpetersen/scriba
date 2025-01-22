@@ -1,0 +1,8 @@
+configparser
+websockets
+pyaudio
+keyboard
+pywin32
+pystray
+pillow
+win10toast
