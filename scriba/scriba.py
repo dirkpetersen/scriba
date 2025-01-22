@@ -332,7 +332,16 @@ class Scriba:
                 if header[":message-type"] == 'exception':
                     error_msg = payload['Message']
                     logging.error(error_msg)
-                    if "Your request timed out because no new audio was received" in error_msg:
+                    if "The security token included in the request is invalid" in error_msg:
+                        logging.error("Invalid AWS credentials - exiting")
+                        self.gui.show_notification(
+                            "Scriba Error",
+                            "Invalid AWS credentials - please check your configuration",
+                            duration=5
+                        )
+                        self.running = False
+                        break
+                    elif "Your request timed out because no new audio was received" in error_msg:
                         logging.info("AWS Transcribe timeout detected")
                         self.gui.set_state('timeout')
                     continue
