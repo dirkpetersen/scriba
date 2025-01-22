@@ -7,6 +7,7 @@ import keyboard
 import win32con
 import win32gui
 import win32api
+import win32process
 import ctypes
 from ctypes import wintypes
 import time
@@ -137,7 +138,7 @@ class Scriba:
             logging.debug(f"Active window handle: 0x{hwnd:08x}")
             window_title = win32gui.GetWindowText(hwnd)
             window_class = win32gui.GetClassName(hwnd)
-            window_thread = win32gui.GetWindowThreadProcessId(hwnd)[0]
+            window_thread = win32process.GetWindowThreadProcessId(hwnd)[0]
             logging.debug(f"Window title: '{window_title}', class: '{window_class}', thread: {window_thread}")
 
             # Send each character
