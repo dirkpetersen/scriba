@@ -120,6 +120,15 @@ class Scriba:
                     self.access_key = config['default'].get('aws_access_key_id', '')
                     self.secret_key = config['default'].get('aws_secret_access_key', '')      
                     self.session_token = config['default'].get('aws_session_token', '')
+            
+            if not self.access_key or not self.secret_key:
+                logging.error("AWS credentials not found - please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
+                self.gui.show_notification(
+                    "Scriba Error",
+                    "AWS credentials not found - please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY",
+                    duration=5
+                )
+                sys.exit(1)
 
         # print(self.access_key, self.secret_key, self.session_token, self.region)
             
