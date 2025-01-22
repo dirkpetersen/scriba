@@ -98,7 +98,7 @@ class Scriba:
         self.gui = GUI(self.toggle_recording, self.stop)
         self.gui.start()
         self.gui.show_notification(
-            "Scriba Started",
+            "Scriba",
             "Ready to transcribe audio"
         )
         self.silence_threshold = 300  # Lower threshold for audio activity
@@ -275,11 +275,6 @@ class Scriba:
                                 logging.info("Voice activity detected")
                                 voice_active = True
                                 self.gui.set_state('active')
-                                self.gui.show_notification(
-                                    "Voice Detected",
-                                    "Started transcribing audio",
-                                    duration=2
-                                )
                         elif voice_active:
                             silence_frames += 1
                             if silence_frames > 10:
@@ -506,7 +501,7 @@ class Scriba:
         state = 'ready' if self.recording_enabled else 'disabled'
         self.gui.set_state(state)
         self.gui.show_notification(
-            "Recording Status",
+            "Scriba",
             f"Recording {state}",
             duration=2
         )
