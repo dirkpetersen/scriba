@@ -406,6 +406,11 @@ class Scriba:
                     ping_timeout=None
                 ) as websocket:
                     logging.info("Connected to AWS Transcribe")
+                    self.gui.show_notification(
+                        "Scriba",
+                        "Ready to record audio",
+                        duration=3
+                    )
                     try:
                         await asyncio.gather(
                             self.record_and_stream(websocket),
