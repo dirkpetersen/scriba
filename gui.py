@@ -22,10 +22,17 @@ class GUI:
         """Initialize the system tray icon"""
         image = self._create_base_image('yellow')
         
-        def handler(icon, item):
-            """Handle menu item clicks"""
+        def toggle_handler(icon, item):
+            """Handle toggle recording clicks"""
             if self.on_click_callback:
                 self.on_click_callback()
+                
+        def exit_handler(icon, item):
+            """Handle exit menu clicks"""
+            icon.stop()
+            # Force Python to exit since icon runs in daemon thread
+            import os
+            os._exit(0)
         
         self.icon = pystray.Icon(
             name='scriba',
@@ -34,9 +41,13 @@ class GUI:
             menu=pystray.Menu(
                 pystray.MenuItem(
                     text="Toggle Recording",
-                    action=handler,
+                    action=toggle_handler,
                     default=True,
                     visible=True
+                ),
+                pystray.MenuItem(
+                    text="Exit",
+                    action=exit_handler
                 )
             )
         )
