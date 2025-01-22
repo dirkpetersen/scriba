@@ -1,6 +1,6 @@
 # Note: This App runs on Windows OS
 
-import os, sys, logging, string, random, configparser, asyncio, pathlib, re, threading
+import os, sys, logging, string, random, configparser, asyncio, pathlib, re
 import websockets
 import pyaudio
 import keyboard
