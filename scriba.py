@@ -252,12 +252,17 @@ class Scriba:
                         is_active = self.is_audio_active(data)
                         current_time = time.time()
                         
+                        # Only process audio if recording is enabled
+                        if not self.recording_enabled:
+                            is_active = False
+                            data = b'\x00' * (self.CHUNK * self.BYTES_PER_SAMPLE)
+                        
                         # If not active, send silence (zeros) to maintain stream
                         if not is_active and self._in_billable_minute:
                             data = b'\x00' * (self.CHUNK * self.BYTES_PER_SAMPLE)
                         
                         # Start a new billable minute when voice activity is detected
-                        if is_active and not self._in_billable_minute:
+                        if is_active and not self._in_billable_minute and self.recording_enabled:
                             self._minute_start_time = current_time
                             self._in_billable_minute = True
                             logging.debug("Starting new billable minute")
