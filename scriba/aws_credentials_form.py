@@ -12,11 +12,11 @@ def prompt_aws_credentials(default_region='us-west-2'):
         [sg.Text('AWS Credentials Required', font=('Helvetica', 12, 'bold'))],
         [sg.Text('Please enter your AWS credentials:')],
         [sg.Text('AWS Access Key ID:', size=(15, 1)), 
-         sg.Input(key='access_key', size=(45, 1))],
+         sg.Input(key='access_key', size=(45, 1), right_click_menu=['&Right', ['Paste']])],
         [sg.Text('AWS Secret Key:', size=(15, 1)), 
-         sg.Input(key='secret_key', size=(45, 1), password_char='*')],
+         sg.Input(key='secret_key', size=(45, 1), password_char='*', right_click_menu=['&Right', ['Paste']])],
         [sg.Text('AWS Region:', size=(15, 1)), 
-         sg.Input(default_text=default_region, key='region', size=(45, 1))],
+         sg.Input(default_text=default_region, key='region', size=(45, 1), right_click_menu=['&Right', ['Paste']])],
         [sg.Button('Save'), sg.Button('Cancel')]
     ]
     
@@ -24,9 +24,18 @@ def prompt_aws_credentials(default_region='us-west-2'):
     window.bring_to_front()
     
     try:
-        event, values = window.read()
-        
-        if event == 'Save' and values['access_key'] and values['secret_key']:
+        while True:
+            event, values = window.read()
+            
+            if event == sg.WIN_CLOSED or event == 'Cancel':
+                break
+                
+            if event == 'Paste':
+                element = window.find_element_with_focus()
+                if element:
+                    element.Widget.event_generate('<<Paste>>')
+                    
+            if event == 'Save' and values['access_key'] and values['secret_key']:
             # Create config directories if they don't exist
             aws_dir = os.path.join(pathlib.Path.home(), '.aws')
             os.makedirs(aws_dir, exist_ok=True)
