@@ -36,11 +36,11 @@ def prompt_aws_credentials(default_region='us-west-2'):
                     element.Widget.event_generate('<<Paste>>')
                     
             if event == 'Save' and values['access_key'] and values['secret_key']:
-            # Create config directories if they don't exist
-            aws_dir = os.path.join(pathlib.Path.home(), '.aws')
-            os.makedirs(aws_dir, exist_ok=True)
-            
-            # Save credentials
+                # Create config directories if they don't exist
+                aws_dir = os.path.join(pathlib.Path.home(), '.aws')
+                os.makedirs(aws_dir, exist_ok=True)
+                
+                # Save credentials
             config = configparser.ConfigParser()
             credentials_file = os.path.join(aws_dir, 'credentials')
             if os.path.exists(credentials_file):
