@@ -33,19 +33,25 @@ def prompt_aws_credentials(default_region='us-west-2'):
             
             # Save credentials
             config = configparser.ConfigParser()
-            config['default'] = {
-                'aws_access_key_id': values['access_key'],
-                'aws_secret_access_key': values['secret_key']
-            }
-            with open(os.path.join(aws_dir, 'credentials'), 'w') as f:
+            credentials_file = os.path.join(aws_dir, 'credentials')
+            if os.path.exists(credentials_file):
+                config.read(credentials_file)
+            if 'default' not in config:
+                config['default'] = {}
+            config['default']['aws_access_key_id'] = values['access_key']
+            config['default']['aws_secret_access_key'] = values['secret_key']
+            with open(credentials_file, 'w') as f:
                 config.write(f)
                 
             # Save region config
             config = configparser.ConfigParser()
-            config['default'] = {
-                'region': values['region']
-            }
-            with open(os.path.join(aws_dir, 'config'), 'w') as f:
+            config_file = os.path.join(aws_dir, 'config')
+            if os.path.exists(config_file):
+                config.read(config_file)
+            if 'default' not in config:
+                config['default'] = {}
+            config['default']['region'] = values['region']
+            with open(config_file, 'w') as f:
                 config.write(f)
                 
             return values['access_key'], values['secret_key'], values['region']
