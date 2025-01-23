@@ -63,8 +63,8 @@ def prompt_aws_credentials(default_region='us-west-2'):
                 with open(config_file, 'w') as f:
                     config.write(f)
                 
-            return values['access_key'], values['secret_key'], values['region']
-            
+                return values['access_key'], values['secret_key'], values['region']
+                
     finally:
         window.close()
         
