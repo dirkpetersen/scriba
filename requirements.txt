@@ -9,3 +9,4 @@ pytest>=7.0.0
 pyinstaller>=5.0.0
 build>=0.10.0
 twine>=4.0.0
+pysimplegui<=4.70.1
