@@ -47,7 +47,7 @@ jobs:
         pip install pyinstaller
     - name: Build executable
       run: |
-        pyinstaller --onefile --windowed --icon=scriba.ico scriba.py
+        pyinstaller --onefile --windowed --icon=scriba.ico scriba/scriba.py
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
