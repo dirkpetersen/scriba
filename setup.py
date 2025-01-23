@@ -4,17 +4,17 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="scriba",
+    name="pyscriba",
     version="0.1.0",
     author="Dirk Petersen",
     author_email="your.email@example.com",
-    description="A private secretary who transcribes your voice notes using AWS transcribe",
+    description="An eager helper who transcribes your voice notes using AWS transcribe",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/scriba",
+    url="https://github.com/dirkpetersen/scriba",
     packages=find_packages(),
     classifiers=[
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 4 - Beta",
         "Environment :: Win32 (MS Windows)",
         "Intended Audience :: End Users/Desktop",
         "License :: OSI Approved :: MIT License",
@@ -27,7 +27,7 @@ setup(
         "Programming Language :: Python :: 3.13",        
 
     ],
-    python_requires=">=3.8",
+    python_requires=">=3.9",
     install_requires=[
         "configparser",
         "websockets",
@@ -46,7 +46,7 @@ setup(
 )
 
 """
-Scriba - A private secretary who transcribes your voice notes
+Scriba - An eager helper who transcribes your voice notes
 """
 
 __version__ = "0.1.0"
