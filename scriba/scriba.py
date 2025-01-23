@@ -539,6 +539,17 @@ class Scriba:
             print("\nScriba stopped.")
 
 def main():
+    import win32event
+    import win32api
+    import winerror
+    import sys
+    
+    mutex_name = "Global\\ScribaSingleInstance"
+    mutex = win32event.CreateMutex(None, False, mutex_name)
+    if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
+        print("Another instance of Scriba is already running.")
+        sys.exit(1)
+        
     def signal_handler(signum, frame):
         print("\nPlease use Ctrl+Shift+X to stop Scriba properly.")
         print("Continuing...")
@@ -546,8 +557,13 @@ def main():
     import signal
     signal.signal(signal.SIGINT, signal_handler)
     
-    scriba = Scriba()
-    scriba.start()
+    try:
+        scriba = Scriba()
+        scriba.start()
+    finally:
+        # Release the mutex when the program exits
+        if mutex:
+            win32api.CloseHandle(mutex)
 
 if __name__ == "__main__":
     main()
