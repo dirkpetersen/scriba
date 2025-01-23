@@ -45,9 +45,6 @@ setup(
     include_package_data=True,
 )
 
-[build-system]
-requires = ["setuptools>=45", "wheel", "setuptools_scm>=6.2"]
-build-backend = "setuptools.build_meta"
 """
 Scriba - A private secretary who transcribes your voice notes
 """

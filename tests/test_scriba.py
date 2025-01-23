@@ -1,4 +1,5 @@
 import pytest
+import pyaudio
 from scriba.scriba import Scriba
 
 def test_scriba_init():
