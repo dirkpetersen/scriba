@@ -11,9 +11,9 @@ import win32process
 import ctypes
 from ctypes import wintypes
 import time
-from scriba.presigned_url import AWSTranscribePresignedURL
-from scriba.eventstream import create_audio_event, decode_event
-from scriba.gui import GUI
+from presigned_url import AWSTranscribePresignedURL
+from eventstream import create_audio_event, decode_event
+from gui import GUI
 
 user32 = ctypes.WinDLL('user32', use_last_error=True)
 
