@@ -435,9 +435,11 @@ class Scriba:
                     except websockets.exceptions.ConnectionClosedOK:
                         logging.info("Connection closed normally, waiting...")
                         await asyncio.sleep(1)  # Brief pause before reconnecting
-                        continue
+                        if self.running:  # Only continue if we're still meant to be running
+                            continue
+                        break
                     except websockets.exceptions.ConnectionClosedError as e:
-                        if attempt < max_retries:
+                        if attempt < max_retries and self.running:  # Only retry if we're still meant to be running
                             logging.warning(f"Connection closed unexpectedly, retrying in {retry_delay} seconds... ({e})")
                             await asyncio.sleep(retry_delay)
                             continue
