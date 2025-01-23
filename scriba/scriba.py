@@ -433,7 +433,7 @@ class Scriba:
                             self.receive_transcription(websocket)
                         )
                     except websockets.exceptions.ConnectionClosedOK:
-                        logging.info("Connection closed normally, reconnecting...")
+                        logging.info("Connection closed normally, waiting...")
                         await asyncio.sleep(1)  # Brief pause before reconnecting
                         continue
                     except websockets.exceptions.ConnectionClosedError as e:
