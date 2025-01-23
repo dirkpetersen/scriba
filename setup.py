@@ -48,14 +48,6 @@ setup(
 [build-system]
 requires = ["setuptools>=45", "wheel", "setuptools_scm>=6.2"]
 build-backend = "setuptools.build_meta"
-import pytest
-from scriba.scriba import Scriba
-
-def test_scriba_init():
-    scriba = Scriba()
-    assert scriba.RATE == 16000
-    assert scriba.CHANNELS == 1
-    assert scriba.FORMAT == 16 # pyaudio.paInt16
 """
 Scriba - A private secretary who transcribes your voice notes
 """
