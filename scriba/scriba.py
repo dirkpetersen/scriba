@@ -122,7 +122,7 @@ class Scriba:
                     self.session_token = config['default'].get('aws_session_token', '')
             
             if not self.access_key or not self.secret_key:
-                from scriba.aws_credentials_form import prompt_aws_credentials
+                from aws_credentials_form import prompt_aws_credentials
                 self.access_key, self.secret_key, self.region = prompt_aws_credentials(self.region)
                 if not self.access_key or not self.secret_key:
                     logging.error("AWS credentials not provided - exiting")
