@@ -17,7 +17,7 @@ from gui import GUI
 
 user32 = ctypes.WinDLL('user32', use_last_error=True)
 
-LOGLEVEL=logging.INFO # logging.INFO or logging.DEBUG
+LOGLEVEL=logging.DEBUG # logging.INFO or logging.DEBUG
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 
@@ -341,9 +341,10 @@ class Scriba:
                 response = await websocket.recv()
                 header, payload = decode_event(response)
 
+                logging.debug(f"Received message type: {header[':message-type']}")
                 if header[":message-type"] == 'exception':
                     error_msg = payload['Message']
-                    logging.error(error_msg)
+                    logging.error(f"AWS Exception: {error_msg}")
                     if "The security token included in the request is invalid" in error_msg:
                         logging.error("Invalid AWS credentials - exiting")
                         self.gui.show_notification(
@@ -373,10 +374,14 @@ class Scriba:
                 
             except websockets.exceptions.ConnectionClosedOK:
                 logging.info("Streaming completed successfully - waiting ...")
+                logging.debug("Connection close code: normal closure")
+                if self.running:
+                    logging.info("Will attempt to reconnect...")
                 break
                 
-            except websockets.exceptions.ConnectionClosedError:
-                logging.error("WebSocket connection closed unexpectedly")
+            except websockets.exceptions.ConnectionClosedError as e:
+                logging.error(f"WebSocket connection closed unexpectedly: {e}")
+                logging.debug(f"Connection close code: {e.code}, reason: {e.reason}")
                 break
                 
             except Exception as e:
@@ -432,15 +437,20 @@ class Scriba:
                         "Ready to record audio",
                         duration=3
                     )
+                    logging.debug(f"Starting transcription session with URL: {request_url}")
                     try:
-                        await asyncio.gather(
+                        tasks = [
                             self.record_and_stream(websocket),
                             self.receive_transcription(websocket)
-                        )
+                        ]
+                        await asyncio.gather(*tasks)
+                        logging.debug("Both recording and transcription tasks completed")
                     except websockets.exceptions.ConnectionClosedOK:
                         logging.info("Connection closed normally, waiting...")
+                        logging.debug(f"Running state: {self.running}, In billable minute: {self._in_billable_minute}")
                         await asyncio.sleep(1)  # Brief pause before reconnecting
                         if self.running:  # Only continue if we're still meant to be running
+                            logging.info("Attempting to reconnect after normal closure...")
                             continue
                         break
                     except websockets.exceptions.ConnectionClosedError as e:
