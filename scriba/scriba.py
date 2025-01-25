@@ -139,7 +139,7 @@ class Scriba:
             # Insert a space after punctuation if not already present
             sendtext = re.sub(r'([.?!])(?![\s"])', r'\1 ', text)
             # Remove filler words like ' um', ' uh', ' oh' followd by comma or white space 
-            sendtext = re.sub(r' (oh|uh|um|ah)[ ,]', '', sendtext, flags=re.IGNORECASE)
+            sendtext = re.sub(r'\b(oh|uh|um|ah)[ ,.]', '', sendtext, flags=re.IGNORECASE)
             if is_partial:
                 logging.debug(f"Partial: {text}")
             else:
