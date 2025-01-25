@@ -139,11 +139,12 @@ class Scriba:
             # Insert a space after punctuation if not already present
             sendtext = re.sub(r'([.?!])(?![\s"])', r'\1 ', text)
             # Remove filler words and their variations, including at start of sentences
+            # sendtext = re.sub(r'\b(hm|mm|oh|uh|um|ah)\s*[ ,.]\s*', '', sendtext, flags=re.IGNORECASE)
             sendtext = re.sub(r'\b(hm+|mm+|oh|uh+|um+|ah+|er+|well+)\s*(?:[,.])?\s*', '', sendtext, flags=re.IGNORECASE)
             # Clean up any resulting double spaces
-            sendtext = re.sub(r'\s+', ' ', sendtext)
+            #sendtext = re.sub(r'\s+', ' ', sendtext)
             # Clean up spaces before punctuation
-            sendtext = re.sub(r'\s+([,.?!])', r'\1', sendtext)
+            #sendtext = re.sub(r'\s+([,.?!])', r'\1', sendtext)
             if is_partial:
                 logging.debug(f"Partial: {text}")
             else:
