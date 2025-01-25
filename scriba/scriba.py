@@ -338,8 +338,11 @@ class Scriba:
         while self.running:
             try:
                 response = await websocket.recv()
+                # Only process messages if recording is enabled
+                if not self.recording_enabled:
+                    continue
+                    
                 header, payload = decode_event(response)
-
                 logging.debug(f"Received message type: {header[':message-type']}")
                 if header[":message-type"] == 'exception':
                     error_msg = payload['Message']
