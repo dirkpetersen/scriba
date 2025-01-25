@@ -449,13 +449,24 @@ class Scriba:
                         
                         # Wait for both tasks to complete or fail
                         try:
-                            await asyncio.gather(*tasks)
-                        except asyncio.CancelledError:
-                            logging.debug("Tasks cancelled during shutdown")
-                        except Exception as e:
-                            logging.error(f"Task error: {e}")
+                            logging.debug("Starting task execution")
+                            done, pending = await asyncio.wait(
+                                tasks,
+                                return_when=asyncio.FIRST_EXCEPTION
+                            )
+                            logging.debug(f"Task execution state - Done: {len(done)}, Pending: {len(pending)}")
+                            
+                            # Check for exceptions in completed tasks
+                            for task in done:
+                                try:
+                                    result = task.result()
+                                    logging.debug(f"Task {task.get_name()} completed normally with result: {result}")
+                                except Exception as e:
+                                    logging.error(f"Task {task.get_name()} failed with error: {type(e).__name__}: {str(e)}")
+                                    logging.debug(f"Task {task.get_name()} exception details:", exc_info=True)
+                            
                             if self.running:
-                                logging.info("Task error occurred but application still running - will reconnect")
+                                logging.info("Tasks completed but application still running - will reconnect")
                                 continue
                         finally:
                             # Cancel any remaining tasks
@@ -475,15 +486,21 @@ class Scriba:
                         if not self.running:
                             logging.info("Application stopping - not reconnecting")
                             break
-                        
+                
                         logging.debug("Checking active tasks before reconnect")
                         current_tasks = [t for t in asyncio.all_tasks() 
                                        if t is not asyncio.current_task()]
-                        logging.debug(f"Active tasks before reconnect: {[t.get_name() for t in current_tasks]}")
-                        
+                        for task in current_tasks:
+                            logging.debug(f"Task {task.get_name()}: done={task.done()}, "
+                                        f"cancelled={task.cancelled()}, "
+                                        f"exception={task.exception() if task.done() else 'N/A'}")
+                
                         await asyncio.sleep(1)  # Brief pause before reconnecting
                         if self.running:  # Only continue if we're still meant to be running
                             logging.info("Attempting to reconnect after normal closure...")
+                            # Reset billable minute state for new connection
+                            self._in_billable_minute = False
+                            self._minute_start_time = 0
                             continue
                         break
                     except websockets.exceptions.ConnectionClosedError as e:
