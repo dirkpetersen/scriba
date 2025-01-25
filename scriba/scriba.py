@@ -132,7 +132,27 @@ class Scriba:
             
         # Initialize PyAudio
         self.audio = pyaudio.PyAudio()
-        
+
+    def process_transcript(self, text: str, is_partial: bool) -> None:
+        """Process / correct / modify transcript text"""
+        try:
+            # Insert a space after punctuation if not already present
+            sendtext = re.sub(r'([.?!])(?![\s"])', r'\1 ', text)
+            # Remove filler words like 'um', 'uh', 'oh'
+            sendtext = re.sub(r' (oh|uh|um|ah),', '', sendtext, flags=re.IGNORECASE)
+            sendtext = re.sub(r' (oh|uh|um|ah) ', '', sendtext, flags=re.IGNORECASE)
+            if is_partial:
+                logging.debug(f"Partial: {text}")
+            else:
+                # Add a single white space at the end of a string if it doesn't already exist,
+                sendtext = re.sub(r'([^ ])$', r'\1 ', sendtext)
+                self.send_keystrokes_win32(sendtext)               
+                logging.info(f"Transcript: {sendtext}")
+                        
+        except Exception as e:
+            logging.error(f"Error processing transcript: {e}")
+
+
     def send_keystrokes_win32(self, text):
         """Send keystrokes using Win32 API SendInput to active window"""
         # Ensure window is active and ready
@@ -313,21 +333,6 @@ class Scriba:
             stream.stop_stream()
             stream.close()
 
-    def process_transcript(self, text: str, is_partial: bool) -> None:
-        """Process / correct / modify transcript text"""
-        try:
-            # Insert a space after punctuation if not already present
-            sendtext = re.sub(r'([.?!])(?![\s"])', r'\1 ', text)
-            # Remove filler words like 'um', 'uh', 'oh'
-            sendtext = re.sub(r' (oh|uh|um|ah),', '', text, flags=re.IGNORECASE)
-            if is_partial:
-                logging.debug(f"Partial: {text}")
-            else:
-                self.send_keystrokes_win32(sendtext)               
-                logging.info(f"Transcript: {sendtext}")
-                        
-        except Exception as e:
-            logging.error(f"Error processing transcript: {e}")
 
     async def receive_transcription(self, websocket):
         """Receive and process transcription results from websocket"""
