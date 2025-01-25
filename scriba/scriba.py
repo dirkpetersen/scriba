@@ -66,6 +66,12 @@ class Scriba:
         self._current_transcript = ""
         self._last_printed_text = ""
         
+        # Connection state management
+        self._connection_attempts = 0
+        self._last_timeout = 0
+        self._consecutive_timeouts = 0
+        self._backoff_time = 1
+        
         # AWS Transcribe billing optimization
         self._minute_start_time = 0
         self._in_billable_minute = False
@@ -415,13 +421,34 @@ class Scriba:
                 logging.exception(f"Error in receive_transcription: {e}")
                 break
 
+    def _reset_connection_state(self):
+        """Reset connection state after successful connection"""
+        self._connection_attempts = 0
+        self._consecutive_timeouts = 0
+        self._backoff_time = 1
+        self._in_billable_minute = False
+        self._minute_start_time = 0
+
+    def _handle_timeout(self):
+        """Handle AWS Transcribe timeout with exponential backoff"""
+        self._consecutive_timeouts += 1
+        self._backoff_time = min(300, 2 ** self._consecutive_timeouts)  # Cap at 5 minutes
+        logging.warning(f"Timeout detected (consecutive: {self._consecutive_timeouts}, "
+                       f"next backoff: {self._backoff_time}s)")
+        self.gui.set_state('timeout')
+
+    async def _reinitialize_stream(self):
+        """Reinitialize audio stream and connection state"""
+        logging.info("Reinitializing audio stream and connection...")
+        if hasattr(self, 'audio'):
+            self.audio.terminate()
+        self.audio = pyaudio.PyAudio()
+        self._reset_connection_state()
+        await asyncio.sleep(self._backoff_time)
+
     async def connect_to_websocket(self):
-        max_retries = 10  # Increase max retries
-        retry_delay = 2
-        attempt = 0
-        consecutive_timeouts = 0
-        
-        while self.running:  # Remove attempt limit from main loop
+        """Main connection loop with improved error handling"""
+        while self.running:
             try:
                 attempt += 1
                 logging.info(f"Connecting to AWS Transcribe (attempt {attempt}/{max_retries})")
@@ -520,19 +547,15 @@ class Scriba:
                                     except Exception as e:
                                         logging.error(f"Error cancelling {task.get_name()}: {e}")
                     except websockets.exceptions.ConnectionClosedOK:
-                        logging.info("Connection closed normally, waiting...")
-                        logging.debug(f"Running state: {self.running}, In billable minute: {self._in_billable_minute}")
+                        logging.info("Connection closed normally")
                         
-                        # Check if closure was due to timeout
+                        # Handle AWS timeout specifically
                         if "timeout" in str(websocket.close_reason).lower():
-                            consecutive_timeouts += 1
-                            logging.warning(f"Timeout detected (consecutive: {consecutive_timeouts})")
-                            if consecutive_timeouts >= 3:
-                                # Reset timeout counter and increase delay
-                                consecutive_timeouts = 0
-                                await asyncio.sleep(5)  # Longer delay after multiple timeouts
+                            self._handle_timeout()
+                            await self._reinitialize_stream()
                         else:
-                            consecutive_timeouts = 0  # Reset on non-timeout closure
+                            self._reset_connection_state()
+                            await asyncio.sleep(1)  # Brief pause before reconnect
                             
                         if not self.running:
                             logging.info("Application stopping - not reconnecting")
