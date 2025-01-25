@@ -71,6 +71,8 @@ class Scriba:
         self._last_timeout = 0
         self._consecutive_timeouts = 0
         self._backoff_time = 1
+        self._max_retries = 10
+        self._retry_delay = 2
         
         # AWS Transcribe billing optimization
         self._minute_start_time = 0
@@ -448,10 +450,11 @@ class Scriba:
 
     async def connect_to_websocket(self):
         """Main connection loop with improved error handling"""
+        attempt = 0
         while self.running:
             try:
                 attempt += 1
-                logging.info(f"Connecting to AWS Transcribe (attempt {attempt}/{max_retries})")
+                logging.info(f"Connecting to AWS Transcribe (attempt {attempt}/{self._max_retries})")
                 
                 # Initialize URL generator with explicit region
                 transcribe_url_generator = AWSTranscribePresignedURL(
@@ -580,19 +583,19 @@ class Scriba:
                     except websockets.exceptions.ConnectionClosedError as e:
                         if self.running:  # Only retry if we're still meant to be running
                             attempt += 1
-                            if attempt >= max_retries:
-                                logging.error(f"Failed to maintain connection after {max_retries} attempts - resetting counter")
+                            if attempt >= self._max_retries:
+                                logging.error(f"Failed to maintain connection after {self._max_retries} attempts - resetting counter")
                                 attempt = 0  # Reset attempt counter instead of breaking
-                                await asyncio.sleep(retry_delay * 2)  # Longer delay after max retries
+                                await asyncio.sleep(self._retry_delay * 2)  # Longer delay after max retries
                             else:
-                                logging.warning(f"Connection closed unexpectedly, retrying in {retry_delay} seconds... (attempt {attempt}/{max_retries}) ({e})")
-                                await asyncio.sleep(retry_delay)
+                                logging.warning(f"Connection closed unexpectedly, retrying in {self._retry_delay} seconds... (attempt {attempt}/{self._max_retries}) ({e})")
+                                await asyncio.sleep(self._retry_delay)
                             continue
                     
             except Exception as e:
                 logging.exception(f"Unexpected error in connection: {e}")
-                if attempt < max_retries:
-                    await asyncio.sleep(retry_delay * attempt)  # Exponential backoff
+                if attempt < self._max_retries:
+                    await asyncio.sleep(self._retry_delay * attempt)  # Exponential backoff
                     continue
                 break
 
