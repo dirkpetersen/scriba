@@ -416,11 +416,12 @@ class Scriba:
                 break
 
     async def connect_to_websocket(self):
-        max_retries = 3
+        max_retries = 10  # Increase max retries
         retry_delay = 2
         attempt = 0
+        consecutive_timeouts = 0
         
-        while self.running and attempt < max_retries:
+        while self.running:  # Remove attempt limit from main loop
             try:
                 attempt += 1
                 logging.info(f"Connecting to AWS Transcribe (attempt {attempt}/{max_retries})")
@@ -521,6 +522,18 @@ class Scriba:
                     except websockets.exceptions.ConnectionClosedOK:
                         logging.info("Connection closed normally, waiting...")
                         logging.debug(f"Running state: {self.running}, In billable minute: {self._in_billable_minute}")
+                        
+                        # Check if closure was due to timeout
+                        if "timeout" in str(websocket.close_reason).lower():
+                            consecutive_timeouts += 1
+                            logging.warning(f"Timeout detected (consecutive: {consecutive_timeouts})")
+                            if consecutive_timeouts >= 3:
+                                # Reset timeout counter and increase delay
+                                consecutive_timeouts = 0
+                                await asyncio.sleep(5)  # Longer delay after multiple timeouts
+                        else:
+                            consecutive_timeouts = 0  # Reset on non-timeout closure
+                            
                         if not self.running:
                             logging.info("Application stopping - not reconnecting")
                             break
@@ -542,13 +555,16 @@ class Scriba:
                             continue
                         break
                     except websockets.exceptions.ConnectionClosedError as e:
-                        if attempt < max_retries and self.running:  # Only retry if we're still meant to be running
-                            logging.warning(f"Connection closed unexpectedly, retrying in {retry_delay} seconds... ({e})")
-                            await asyncio.sleep(retry_delay)
+                        if self.running:  # Only retry if we're still meant to be running
+                            attempt += 1
+                            if attempt >= max_retries:
+                                logging.error(f"Failed to maintain connection after {max_retries} attempts - resetting counter")
+                                attempt = 0  # Reset attempt counter instead of breaking
+                                await asyncio.sleep(retry_delay * 2)  # Longer delay after max retries
+                            else:
+                                logging.warning(f"Connection closed unexpectedly, retrying in {retry_delay} seconds... (attempt {attempt}/{max_retries}) ({e})")
+                                await asyncio.sleep(retry_delay)
                             continue
-                        else:
-                            logging.error(f"Failed to maintain connection after {max_retries} attempts")
-                            break
                     
             except Exception as e:
                 logging.exception(f"Unexpected error in connection: {e}")
