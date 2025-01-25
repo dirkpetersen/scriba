@@ -450,24 +450,37 @@ class Scriba:
                         # Wait for both tasks to complete or fail
                         try:
                             logging.debug("Starting task execution")
-                            done, pending = await asyncio.wait(
+                            # Use wait_for to prevent immediate task completion
+                            await asyncio.wait(
                                 tasks,
-                                return_when=asyncio.FIRST_EXCEPTION
+                                return_when=asyncio.FIRST_COMPLETED
                             )
-                            logging.debug(f"Task execution state - Done: {len(done)}, Pending: {len(pending)}")
                             
-                            # Check for exceptions in completed tasks
-                            for task in done:
-                                try:
-                                    result = task.result()
-                                    logging.debug(f"Task {task.get_name()} completed normally with result: {result}")
-                                except Exception as e:
-                                    logging.error(f"Task {task.get_name()} failed with error: {type(e).__name__}: {str(e)}")
-                                    logging.debug(f"Task {task.get_name()} exception details:", exc_info=True)
+                            # If we get here, one task completed - check if it was due to timeout
+                            for task in tasks:
+                                if task.done() and not task.cancelled():
+                                    try:
+                                        exc = task.exception()
+                                        if exc:
+                                            if isinstance(exc, websockets.exceptions.ConnectionClosedOK):
+                                                logging.info("Normal connection closure - will reconnect")
+                                                # Cancel other tasks
+                                                for t in tasks:
+                                                    if not t.done():
+                                                        t.cancel()
+                                                await asyncio.sleep(1)  # Brief pause before reconnect
+                                                if self.running:
+                                                    self._in_billable_minute = False
+                                                    self._minute_start_time = 0
+                                                    break
+                                            else:
+                                                logging.error(f"Task {task.get_name()} failed: {exc}")
+                                                raise exc
+                                    except asyncio.CancelledError:
+                                        pass
                             
                             if self.running:
-                                logging.info("Tasks completed but application still running - will reconnect")
-                                continue
+                                continue  # Reconnect if still running
                         finally:
                             # Cancel any remaining tasks
                             for task in tasks:
