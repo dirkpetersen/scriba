@@ -444,33 +444,28 @@ class Scriba:
                         ]
                         logging.debug("Created tasks: %s", [t.get_name() for t in tasks])
                         
-                        # Wait for either task to complete
-                        done, pending = await asyncio.wait(
-                            tasks,
-                            return_when=asyncio.FIRST_COMPLETED
-                        )
-                        
-                        # Log which task completed and why
-                        for task in done:
-                            try:
-                                result = task.result()
-                                logging.debug(f"Task {task.get_name()} completed normally with result: {result}")
-                            except Exception as e:
-                                logging.error(f"Task {task.get_name()} failed with error: {e}")
-                        
-                        logging.debug(f"Tasks completed: {len(done)}, pending: {len(pending)}")
-                        logging.debug(f"Pending tasks: {[t.get_name() for t in pending]}")
-                        
-                        # Cancel pending tasks
-                        for task in pending:
-                            logging.debug(f"Cancelling pending task: {task.get_name()}")
-                            task.cancel()
-                            try:
-                                await task
-                            except asyncio.CancelledError:
-                                logging.debug(f"Task {task.get_name()} cancelled successfully")
-                            except Exception as e:
-                                logging.error(f"Error while cancelling {task.get_name()}: {e}")
+                        # Wait for both tasks to complete or fail
+                        try:
+                            await asyncio.gather(*tasks)
+                        except asyncio.CancelledError:
+                            logging.debug("Tasks cancelled during shutdown")
+                        except Exception as e:
+                            logging.error(f"Task error: {e}")
+                            if self.running:
+                                logging.info("Task error occurred but application still running - will reconnect")
+                                continue
+                        finally:
+                            # Cancel any remaining tasks
+                            for task in tasks:
+                                if not task.done():
+                                    logging.debug(f"Cancelling task: {task.get_name()}")
+                                    task.cancel()
+                                    try:
+                                        await task
+                                    except asyncio.CancelledError:
+                                        logging.debug(f"Task {task.get_name()} cancelled")
+                                    except Exception as e:
+                                        logging.error(f"Error cancelling {task.get_name()}: {e}")
                     except websockets.exceptions.ConnectionClosedOK:
                         logging.info("Connection closed normally, waiting...")
                         logging.debug(f"Running state: {self.running}, In billable minute: {self._in_billable_minute}")
@@ -580,19 +575,28 @@ class Scriba:
                 # Ensure all tasks are cleaned up
                 pending = asyncio.all_tasks(loop)
                 logging.debug(f"Cleanup: Found {len(pending)} pending tasks")
-                for task in pending:
-                    if not task.done():
-                        logging.debug(f"Cleanup: Cancelling task {task.get_name()}")
-                        task.cancel()
                 if pending:
-                    logging.debug("Cleanup: Waiting for tasks to complete")
-                    try:
-                        loop.run_until_complete(
-                            asyncio.gather(*pending, return_exceptions=True)
-                        )
-                        logging.debug("Cleanup: All tasks completed")
-                    except Exception as e:
-                        logging.error(f"Cleanup: Error during task cleanup: {e}")
+                    logging.debug(f"Cleanup: Task states before cancellation:")
+                    for task in pending:
+                        logging.debug(f"Task {task.get_name()}: done={task.done()}, cancelled={task.cancelled()}")
+                        
+                    # Only cancel tasks that aren't already done
+                    active_tasks = [t for t in pending if not t.done()]
+                    if active_tasks:
+                        logging.debug(f"Cleanup: Cancelling {len(active_tasks)} active tasks")
+                        for task in active_tasks:
+                            task.cancel()
+                            
+                        # Wait for cancellation with timeout
+                        try:
+                            loop.run_until_complete(
+                                asyncio.wait(active_tasks, timeout=5.0)
+                            )
+                            logging.debug("Cleanup: All tasks cancelled successfully")
+                        except asyncio.TimeoutError:
+                            logging.warning("Cleanup: Timeout waiting for tasks to cancel")
+                        except Exception as e:
+                            logging.error(f"Cleanup: Error during task cleanup: {e}")
             except Exception as e:
                 logging.error(f"Error during shutdown: {e}")
             finally:
