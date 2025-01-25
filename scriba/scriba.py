@@ -287,7 +287,8 @@ class Scriba:
                          for i in range(0, len(audio_data), 2))
         return audio_level > self.silence_threshold
 
-    async def record_and_stream(self, websocket):
+    def _init_audio_stream(self):
+        """Initialize and configure the audio input stream"""
         self.get_default_input_device_info()
         stream = self.audio.open(
             format=self.FORMAT,
@@ -297,63 +298,79 @@ class Scriba:
             frames_per_buffer=self.CHUNK
         )
         logging.info(f"Started recording with: {self.RATE}Hz, {self.CHANNELS} channels, chunk size: {self.CHUNK}")
+        return stream
+
+    def _process_voice_activity(self, is_active, voice_active, silence_frames):
+        """Handle voice activity state changes and update GUI"""
+        if is_active:
+            silence_frames = 0
+            self._last_activity_time = time.time()
+            if not voice_active:
+                logging.info("Voice activity detected")
+                voice_active = True
+                self.gui.set_state('active')
+        elif voice_active:
+            silence_frames += 1
+            if silence_frames > 10:
+                logging.info("Voice activity stopped")
+                voice_active = False
+                silence_frames = 0
+                self.gui.set_state('ready')
+        return voice_active, silence_frames
+
+    def _handle_billable_minute(self, is_active, current_time):
+        """Manage billable minute state"""
+        if is_active and not self._in_billable_minute and self.recording_enabled:
+            self._minute_start_time = current_time
+            self._in_billable_minute = True
+            logging.debug("Starting new billable minute")
+        elif self._in_billable_minute and current_time - self._minute_start_time >= 60:
+            self._in_billable_minute = False
+            if not is_active:
+                logging.debug("Billable minute complete")
+
+    async def _process_audio_chunk(self, data, websocket, voice_active, silence_frames):
+        """Process a single chunk of audio data"""
+        is_active = self.is_audio_active(data)
+        current_time = time.time()
+        
+        # Handle recording state
+        if not self.recording_enabled:
+            is_active = False
+            data = b'\x00' * (self.CHUNK * self.BYTES_PER_SAMPLE)
+        elif not is_active and self._in_billable_minute:
+            data = b'\x00' * (self.CHUNK * self.BYTES_PER_SAMPLE)
+            
+        # Update voice activity state
+        voice_active, silence_frames = self._process_voice_activity(
+            is_active, voice_active, silence_frames)
+            
+        # Handle billable minute
+        self._handle_billable_minute(is_active, current_time)
+        
+        # Send audio data if in billable minute
+        if self._in_billable_minute:
+            audio_event = create_audio_event(data)
+            await websocket.send(audio_event)
+            
+        return is_active, voice_active, silence_frames
+
+    async def record_and_stream(self, websocket):
+        """Main audio recording and streaming loop"""
+        stream = self._init_audio_stream()
         
         try:
             consecutive_errors = 0
             voice_active = False
             silence_frames = 0
-            current_time = time.time()
             
             while self.running:
                 try:
                     data = stream.read(self.CHUNK, exception_on_overflow=False)
                     if len(data) > 0:
-                        is_active = self.is_audio_active(data)
-                        current_time = time.time()
-                        
-                        # Only process audio if recording is enabled
-                        if not self.recording_enabled:
-                            is_active = False
-                            data = b'\x00' * (self.CHUNK * self.BYTES_PER_SAMPLE)
-                        
-                        # If not active, send silence (zeros) to maintain stream
-                        if not is_active and self._in_billable_minute:
-                            data = b'\x00' * (self.CHUNK * self.BYTES_PER_SAMPLE)
-                        
-                        # Start a new billable minute when voice activity is detected
-                        if is_active and not self._in_billable_minute and self.recording_enabled:
-                            self._minute_start_time = current_time
-                            self._in_billable_minute = True
-                            logging.debug("Starting new billable minute")
-                        
-                        # Handle voice activity state changes
-                        if is_active:
-                            silence_frames = 0
-                            self._last_activity_time = time.time()
-                            if not voice_active:
-                                logging.info("Voice activity detected")
-                                voice_active = True
-                                self.gui.set_state('active')
-                        elif voice_active:
-                            silence_frames += 1
-                            if silence_frames > 10:
-                                logging.info("Voice activity stopped")
-                                voice_active = False
-                                silence_frames = 0
-                                self.gui.set_state('ready')
-                            
-                        
-                        # Send audio if we're in a billable minute
-                        if self._in_billable_minute:
-                            audio_event = create_audio_event(data)
-                            await websocket.send(audio_event)
-                            consecutive_errors = 0
-                            
-                            # Check if current minute is complete
-                            if current_time - self._minute_start_time >= 60:
-                                self._in_billable_minute = False
-                                if not is_active:
-                                    logging.debug("Billable minute complete")
+                        _, voice_active, silence_frames = await self._process_audio_chunk(
+                            data, websocket, voice_active, silence_frames)
+                        consecutive_errors = 0
                         await asyncio.sleep(0.001)  # Small sleep to prevent CPU overload
                 except websockets.exceptions.ConnectionClosedError:
                     consecutive_errors += 1
