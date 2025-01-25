@@ -439,11 +439,23 @@ class Scriba:
                     logging.debug(f"Starting transcription session with URL: {request_url}")
                     try:
                         tasks = [
-                            self.record_and_stream(websocket),
-                            self.receive_transcription(websocket)
+                            asyncio.create_task(self.record_and_stream(websocket)),
+                            asyncio.create_task(self.receive_transcription(websocket))
                         ]
-                        await asyncio.gather(*tasks)
-                        logging.debug("Both recording and transcription tasks completed")
+                        # Wait for either task to complete
+                        done, pending = await asyncio.wait(
+                            tasks,
+                            return_when=asyncio.FIRST_COMPLETED
+                        )
+                        logging.debug(f"Tasks completed: {len(done)}, pending: {len(pending)}")
+                        
+                        # Cancel pending tasks
+                        for task in pending:
+                            task.cancel()
+                            try:
+                                await task
+                            except asyncio.CancelledError:
+                                pass
                     except websockets.exceptions.ConnectionClosedOK:
                         logging.info("Connection closed normally, waiting...")
                         logging.debug(f"Running state: {self.running}, In billable minute: {self._in_billable_minute}")
@@ -476,18 +488,38 @@ class Scriba:
         self.running = False
         logging.info("Cleaning up resources...")
         
-        # Cancel all tasks except the current one
-        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-        for task in tasks:
-            task.cancel()
+        try:
+            # Cancel all tasks except the current one
+            tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+            if tasks:
+                logging.debug(f"Cancelling {len(tasks)} tasks")
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                        
+                # Wait with timeout for tasks to cancel
+                try:
+                    await asyncio.wait(tasks, timeout=5.0)
+                except asyncio.TimeoutError:
+                    logging.warning("Timeout waiting for tasks to cancel")
+                    
+                # Force cancel any remaining tasks
+                for task in tasks:
+                    if not task.done():
+                        logging.warning(f"Force cancelling task: {task.get_name()}")
+                        task.cancel()
+                        
+        except Exception as e:
+            logging.error(f"Error during task cleanup: {e}")
             
         try:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            if hasattr(self, 'audio'):
+                self.audio.terminate()
+                logging.debug("Audio resources terminated")
         except Exception as e:
-            logging.error(f"Error during cleanup: {e}")
-        finally:
-            self.audio.terminate()
-            logging.info("Cleanup complete")
+            logging.error(f"Error terminating audio: {e}")
+            
+        logging.info("Cleanup complete")
 
     def start(self):
         """Start the voice transcription service"""
@@ -523,8 +555,13 @@ class Scriba:
             try:
                 # Ensure all tasks are cleaned up
                 pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    if not task.done():
+                        task.cancel()
                 if pending:
-                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                    loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
             except Exception as e:
                 logging.error(f"Error during shutdown: {e}")
             finally:
