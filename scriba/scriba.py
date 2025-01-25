@@ -1,6 +1,7 @@
 # Note: This App runs on Windows OS
 
 import os, sys, logging, string, random, configparser, asyncio, pathlib, re
+from logging.handlers import RotatingFileHandler
 import websockets
 import pyaudio
 import keyboard
@@ -69,14 +70,38 @@ class Scriba:
         self._minute_start_time = 0
         self._in_billable_minute = False
         
-        # Configure logging
-        # Configure logging
-        logging.basicConfig(
-            stream=sys.stderr,
-            level=LOGLEVEL,
-            format='%(asctime)s.%(msecs)03d %(levelname)s: %(message)s',
-            datefmt='%H:%M:%S'
-        )
+        # Configure logging based on execution context
+        log_format = '%(asctime)s.%(msecs)03d %(levelname)s: %(message)s'
+        date_format = '%H:%M:%S'
+        
+        # Check if running as PyInstaller executable
+        if getattr(sys, 'frozen', False):
+            # Running as PyInstaller executable
+            log_file = os.path.join(pathlib.Path.home(), 'scriba-log.txt')
+            handler = RotatingFileHandler(
+                log_file,
+                maxBytes=1024*1024,  # 1MB max file size
+                backupCount=1
+            )
+            handler.setFormatter(logging.Formatter(log_format, date_format))
+            
+            # Configure root logger
+            root_logger = logging.getLogger()
+            root_logger.setLevel(LOGLEVEL)
+            root_logger.addHandler(handler)
+            
+            # Redirect stdout and stderr to log file
+            sys.stdout = open(log_file, 'a')
+            sys.stderr = sys.stdout
+        else:
+            # Running as normal Python script
+            logging.basicConfig(
+                stream=sys.stderr,
+                level=LOGLEVEL,
+                format=log_format,
+                datefmt=date_format
+            )
+            
         # Suppress websockets debug logging
         logging.getLogger('websockets').setLevel(logging.INFO)
         
