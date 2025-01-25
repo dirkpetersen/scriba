@@ -448,6 +448,80 @@ class Scriba:
         self._reset_connection_state()
         await asyncio.sleep(self._backoff_time)
 
+    def _generate_websocket_headers(self):
+        """Generate WebSocket headers for connection"""
+        websocket_key = ''.join(random.choices(string.ascii_uppercase + string.ascii_lowercase + string.digits, k=20))
+        return {
+            "Origin": "https://localhost",
+            "Sec-Websocket-Key": websocket_key,
+            "Sec-Websocket-Version": "13",
+            "Connection": "keep-alive"
+        }
+
+    def _create_transcribe_url(self):
+        """Create AWS Transcribe WebSocket URL"""
+        transcribe_url_generator = AWSTranscribePresignedURL(
+            access_key=self.access_key,
+            secret_key=self.secret_key,
+            session_token=self.session_token,
+            region=self.region
+        )
+        
+        return transcribe_url_generator.get_request_url(
+            sample_rate=self.RATE,
+            language_code="en-US",
+            media_encoding="pcm",
+            number_of_channels=self.CHANNELS,
+            enable_channel_identification=False,
+            enable_partial_results_stabilization=True,
+            partial_results_stability="medium"
+        )
+
+    async def _handle_websocket_tasks(self, websocket):
+        """Handle WebSocket tasks for recording and transcription"""
+        tasks = [
+            asyncio.create_task(self.record_and_stream(websocket), name="record_stream"),
+            asyncio.create_task(self.receive_transcription(websocket), name="transcription")
+        ]
+        logging.debug("Created tasks: %s", [t.get_name() for t in tasks])
+        
+        try:
+            logging.debug("Starting task execution")
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            
+            for task in tasks:
+                if task.done() and not task.cancelled():
+                    try:
+                        exc = task.exception()
+                        if exc:
+                            if isinstance(exc, websockets.exceptions.ConnectionClosedOK):
+                                logging.info("Normal connection closure - will reconnect")
+                                for t in tasks:
+                                    if not t.done():
+                                        t.cancel()
+                                await asyncio.sleep(1)
+                                if self.running:
+                                    self._in_billable_minute = False
+                                    self._minute_start_time = 0
+                                    return True
+                            else:
+                                logging.error(f"Task {task.get_name()} failed: {exc}")
+                                raise exc
+                    except asyncio.CancelledError:
+                        pass
+            return self.running
+        finally:
+            for task in tasks:
+                if not task.done():
+                    logging.debug(f"Cancelling task: {task.get_name()}")
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        logging.debug(f"Task {task.get_name()} cancelled")
+                    except Exception as e:
+                        logging.error(f"Error cancelling {task.get_name()}: {e}")
+
     async def connect_to_websocket(self):
         """Main connection loop with improved error handling"""
         attempt = 0
@@ -456,33 +530,8 @@ class Scriba:
                 attempt += 1
                 logging.info(f"Connecting to AWS Transcribe (attempt {attempt}/{self._max_retries})")
                 
-                # Initialize URL generator with explicit region
-                transcribe_url_generator = AWSTranscribePresignedURL(
-                    access_key=self.access_key,
-                    secret_key=self.secret_key,
-                    session_token=self.session_token,
-                    region=self.region
-                )
-                
-                # Generate random websocket key and headers like in example.py
-                websocket_key = ''.join(random.choices(string.ascii_uppercase + string.ascii_lowercase + string.digits, k=20))
-                headers = {
-                    "Origin": "https://localhost",
-                    "Sec-Websocket-Key": websocket_key,
-                    "Sec-Websocket-Version": "13",
-                    "Connection": "keep-alive"
-                }
-                
-                # Generate presigned URL with all required parameters
-                request_url = transcribe_url_generator.get_request_url(
-                    sample_rate=self.RATE,
-                    language_code="en-US",
-                    media_encoding="pcm",
-                    number_of_channels=self.CHANNELS,
-                    enable_channel_identification=False,
-                    enable_partial_results_stabilization=True,
-                    partial_results_stability="medium"
-                )
+                headers = self._generate_websocket_headers()
+                request_url = self._create_transcribe_url()
                 
                 async with websockets.connect(
                     request_url,
@@ -496,108 +545,78 @@ class Scriba:
                         duration=3
                     )
                     logging.debug(f"Starting transcription session with URL: {request_url}")
+                    
                     try:
-                        tasks = [
-                            asyncio.create_task(self.record_and_stream(websocket), name="record_stream"),
-                            asyncio.create_task(self.receive_transcription(websocket), name="transcription")
-                        ]
-                        logging.debug("Created tasks: %s", [t.get_name() for t in tasks])
-                        
-                        # Wait for both tasks to complete or fail
-                        try:
-                            logging.debug("Starting task execution")
-                            # Use wait_for to prevent immediate task completion
-                            await asyncio.wait(
-                                tasks,
-                                return_when=asyncio.FIRST_COMPLETED
-                            )
-                            
-                            # If we get here, one task completed - check if it was due to timeout
-                            for task in tasks:
-                                if task.done() and not task.cancelled():
-                                    try:
-                                        exc = task.exception()
-                                        if exc:
-                                            if isinstance(exc, websockets.exceptions.ConnectionClosedOK):
-                                                logging.info("Normal connection closure - will reconnect")
-                                                # Cancel other tasks
-                                                for t in tasks:
-                                                    if not t.done():
-                                                        t.cancel()
-                                                await asyncio.sleep(1)  # Brief pause before reconnect
-                                                if self.running:
-                                                    self._in_billable_minute = False
-                                                    self._minute_start_time = 0
-                                                    break
-                                            else:
-                                                logging.error(f"Task {task.get_name()} failed: {exc}")
-                                                raise exc
-                                    except asyncio.CancelledError:
-                                        pass
-                            
-                            if self.running:
-                                continue  # Reconnect if still running
-                        finally:
-                            # Cancel any remaining tasks
-                            for task in tasks:
-                                if not task.done():
-                                    logging.debug(f"Cancelling task: {task.get_name()}")
-                                    task.cancel()
-                                    try:
-                                        await task
-                                    except asyncio.CancelledError:
-                                        logging.debug(f"Task {task.get_name()} cancelled")
-                                    except Exception as e:
-                                        logging.error(f"Error cancelling {task.get_name()}: {e}")
-                    except websockets.exceptions.ConnectionClosedOK:
-                        logging.info("Connection closed normally")
-                        
-                        # Handle AWS timeout specifically
-                        if "timeout" in str(websocket.close_reason).lower():
-                            self._handle_timeout()
-                            await self._reinitialize_stream()
-                        else:
-                            self._reset_connection_state()
-                            await asyncio.sleep(1)  # Brief pause before reconnect
-                            
-                        if not self.running:
-                            logging.info("Application stopping - not reconnecting")
-                            break
-                
-                        logging.debug("Checking active tasks before reconnect")
-                        current_tasks = [t for t in asyncio.all_tasks() 
-                                       if t is not asyncio.current_task()]
-                        for task in current_tasks:
-                            logging.debug(f"Task {task.get_name()}: done={task.done()}, "
-                                        f"cancelled={task.cancelled()}, "
-                                        f"exception={task.exception() if task.done() else 'N/A'}")
-                
-                        await asyncio.sleep(1)  # Brief pause before reconnecting
-                        if self.running:  # Only continue if we're still meant to be running
-                            logging.info("Attempting to reconnect after normal closure...")
-                            # Reset billable minute state for new connection
-                            self._in_billable_minute = False
-                            self._minute_start_time = 0
+                        should_continue = await self._handle_websocket_tasks(websocket)
+                        if should_continue:
                             continue
-                        break
+                    except websockets.exceptions.ConnectionClosedOK:
+                        if not await self._handle_normal_closure(websocket):
+                            break
+                        continue
                     except websockets.exceptions.ConnectionClosedError as e:
-                        if self.running:  # Only retry if we're still meant to be running
-                            attempt += 1
-                            if attempt >= self._max_retries:
-                                logging.error(f"Failed to maintain connection after {self._max_retries} attempts - resetting counter")
-                                attempt = 0  # Reset attempt counter instead of breaking
-                                await asyncio.sleep(self._retry_delay * 2)  # Longer delay after max retries
-                            else:
-                                logging.warning(f"Connection closed unexpectedly, retrying in {self._retry_delay} seconds... (attempt {attempt}/{self._max_retries}) ({e})")
-                                await asyncio.sleep(self._retry_delay)
+                        if await self._handle_connection_error(e, attempt):
                             continue
                     
             except Exception as e:
-                logging.exception(f"Unexpected error in connection: {e}")
-                if attempt < self._max_retries:
-                    await asyncio.sleep(self._retry_delay * attempt)  # Exponential backoff
+                if await self._handle_unexpected_error(e, attempt):
                     continue
                 break
+
+    async def _handle_normal_closure(self, websocket):
+        """Handle normal WebSocket closure"""
+        logging.info("Connection closed normally")
+        
+        if "timeout" in str(websocket.close_reason).lower():
+            self._handle_timeout()
+            await self._reinitialize_stream()
+        else:
+            self._reset_connection_state()
+            await asyncio.sleep(1)
+            
+        if not self.running:
+            logging.info("Application stopping - not reconnecting")
+            return False
+            
+        logging.debug("Checking active tasks before reconnect")
+        current_tasks = [t for t in asyncio.all_tasks() 
+                        if t is not asyncio.current_task()]
+        for task in current_tasks:
+            logging.debug(f"Task {task.get_name()}: done={task.done()}, "
+                         f"cancelled={task.cancelled()}, "
+                         f"exception={task.exception() if task.done() else 'N/A'}")
+        
+        await asyncio.sleep(1)
+        if self.running:
+            logging.info("Attempting to reconnect after normal closure...")
+            self._in_billable_minute = False
+            self._minute_start_time = 0
+            return True
+        return False
+
+    async def _handle_connection_error(self, error, attempt):
+        """Handle WebSocket connection errors"""
+        if not self.running:
+            return False
+            
+        attempt += 1
+        if attempt >= self._max_retries:
+            logging.error(f"Failed to maintain connection after {self._max_retries} attempts - resetting counter")
+            attempt = 0
+            await asyncio.sleep(self._retry_delay * 2)
+        else:
+            logging.warning(f"Connection closed unexpectedly, retrying in {self._retry_delay} seconds... "
+                          f"(attempt {attempt}/{self._max_retries}) ({error})")
+            await asyncio.sleep(self._retry_delay)
+        return True
+
+    async def _handle_unexpected_error(self, error, attempt):
+        """Handle unexpected errors during connection"""
+        logging.exception(f"Unexpected error in connection: {error}")
+        if attempt < self._max_retries:
+            await asyncio.sleep(self._retry_delay * attempt)
+            return True
+        return False
 
     async def cleanup(self):
         """Clean up resources"""
