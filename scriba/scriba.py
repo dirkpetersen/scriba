@@ -851,22 +851,22 @@ class Scriba:
         logging.info(f"Switched language to: {new_language}")
         self.gui.show_notification(
             "Scriba",
-            f"Switched to {'German' if new_language == 'de-DE' else 'English'}",
+            f"Switched to {'German' if new_language == 'de-DE' else 'English'}. Will be activate at next disconnect",
             duration=2
         )
         # Force reconnection to apply new language
-        if self.running:
-            try:
-                # Get the running event loop from the main thread
-                loop = asyncio.get_running_loop()
-                #asyncio.run_coroutine_threadsafe(self._reinitialize_stream(), loop)
-                #await self._reinitialize_stream() 
-                asyncio.run_coroutine_threadsafe(self._reset_connection_state, loop)
-                #await self._reset_connection_state()
-            except RuntimeError:
-                logging.warning("Could not get event loop - language change will apply on next connection")
-        #else:            
-        #    await asyncio.sleep(1)
+        # if self.running:
+        #     try:
+        #         # Get the running event loop from the main thread
+        #         loop = asyncio.get_running_loop()
+        #         #asyncio.run_coroutine_threadsafe(self._reinitialize_stream(), loop)
+        #         #await self._reinitialize_stream() 
+        #         asyncio.run_coroutine_threadsafe(self._reset_connection_state, loop)
+        #         #await self._reset_connection_state()
+        #     except RuntimeError:
+        #         logging.warning("Could not get event loop - language change will apply on next connection")
+        # #else:            
+        # #    await asyncio.sleep(1)
     
     def stop(self):
         """Stop the voice transcription service"""
