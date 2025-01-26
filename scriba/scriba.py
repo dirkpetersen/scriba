@@ -1,14 +1,11 @@
 # Note: This App runs on Windows OS
 
-import os, sys, logging, string, random, configparser, asyncio, pathlib, re
+import os, sys, logging, string, random, configparser, asyncio, pathlib, re, argparse
 from logging.handlers import RotatingFileHandler
 import websockets
 import pyaudio
 import keyboard
-import win32con
-import win32gui
-import win32api
-import win32process
+import win32api, win32con, win32gui, win32process, win32event, winerror
 import ctypes
 from ctypes import wintypes
 import time
@@ -192,7 +189,7 @@ class Scriba:
         self.sent_sentences = set()  # Track sent sentences
         
         # Initialize GUI        
-        self.gui = GUI(self.toggle_recording, self.stop, self.switch_language)
+        self.gui = GUI(self.toggle_recording, self.stop, self._current_language)
         self.gui.start()
         self.gui.show_notification(
             "Scriba",
@@ -877,19 +874,6 @@ class Scriba:
             f"Switched to {'German' if new_language == 'de-DE' else 'English'}. Will be activate at next disconnect",
             duration=2
         )
-        # Force reconnection to apply new language
-        # if self.running:
-        #     try:
-        #         # Get the running event loop from the main thread
-        #         loop = asyncio.get_running_loop()
-        #         #asyncio.run_coroutine_threadsafe(self._reinitialize_stream(), loop)
-        #         #await self._reinitialize_stream() 
-        #         asyncio.run_coroutine_threadsafe(self._reset_connection_state, loop)
-        #         #await self._reset_connection_state()
-        #     except RuntimeError:
-        #         logging.warning("Could not get event loop - language change will apply on next connection")
-        # #else:            
-        # #    await asyncio.sleep(1)
     
     def stop(self):
         """Stop the voice transcription service"""
@@ -905,11 +889,6 @@ class Scriba:
             print("\nScriba stopped.")
 
 def main():
-    import win32event
-    import win32api
-    import winerror
-    import sys
-    import argparse
     
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Scriba - Real-time speech transcription')
@@ -936,7 +915,7 @@ def main():
         scriba.gui.current_language = args.language  # Update GUI language state
         scriba.start()
     finally:
-        # Release the mutex when the program exits
+        # Release the mutex when the program exitsMa. 
         if mutex:
             win32api.CloseHandle(mutex)
 
