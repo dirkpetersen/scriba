@@ -636,12 +636,16 @@ class Scriba:
                 headers = self._generate_websocket_headers()
                 request_url = self._create_transcribe_url()
                 
-                # Increase timeout for initial connection
+                # Configure timeouts and retry logic
+                connect_timeout = min(30, 5 * (attempt + 1))  # Increase timeout with each attempt
                 async with websockets.connect(
                     request_url,
                     additional_headers=headers,
                     ping_timeout=None,
-                    open_timeout=30  # 30 second timeout for initial handshake
+                    open_timeout=connect_timeout,
+                    close_timeout=5,
+                    max_size=2**20,  # 1MB max message size
+                    compression=None  # Disable compression to reduce overhead
                 ) as websocket:
                     logging.info("Connected to AWS Transcribe")
                     self.gui.show_notification(
@@ -663,11 +667,19 @@ class Scriba:
                         if await self._handle_connection_error(e, attempt):
                             continue
                     
-            except TimeoutError as e:
-                logging.error(f"Connection timeout: {e}")
-                # Use exponential backoff for timeout retries
-                retry_delay = min(300, 2 ** attempt)  # Cap at 5 minutes
-                logging.info(f"Retrying in {retry_delay} seconds...")
+            except (TimeoutError, ConnectionRefusedError, OSError) as e:
+                logging.error(f"Connection error: {e}")
+                # Use exponential backoff with jitter for retries
+                base_delay = min(300, 2 ** attempt)  # Cap at 5 minutes
+                jitter = random.uniform(0, min(30, base_delay * 0.1))  # Add up to 10% jitter
+                retry_delay = base_delay + jitter
+                
+                logging.info(f"Retrying in {retry_delay:.1f} seconds... (attempt {attempt})")
+                self.gui.show_notification(
+                    "Scriba",
+                    f"Connection failed. Retrying in {int(retry_delay)} seconds...",
+                    duration=2
+                )
                 await asyncio.sleep(retry_delay)
                 continue
                 
