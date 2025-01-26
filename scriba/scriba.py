@@ -933,6 +933,7 @@ def main():
     try:
         scriba = Scriba()
         scriba._current_language = args.language  # Set initial language from command line
+        scriba.gui.current_language = args.language  # Update GUI language state
         scriba.start()
     finally:
         # Release the mutex when the program exits
