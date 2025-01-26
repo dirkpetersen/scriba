@@ -188,13 +188,8 @@ class Scriba:
         self.recording_enabled = True
         self.sent_sentences = set()  # Track sent sentences
         
-        # Initialize GUI        
-        # self.gui = GUI(self.toggle_recording, self.stop, self._current_language)
-        self.gui.start()
-        # self.gui.show_notification(
-        #     "Scriba",
-        #     "Ready to transcribe audio"
-        # )
+        # GUI will be initialized in main()
+        self.gui = None
         self.silence_threshold = 300  # Lower threshold for audio activity
         self.debug_audio = False  # Disable audio level debugging
         
@@ -908,6 +903,7 @@ def main():
             on_exit_callback=scriba.stop,
             language=args.language
         )
+        scriba.gui.start()  # Start GUI after initialization
         scriba.start()
     finally:
         # Release the mutex when the program exitsMa. 
