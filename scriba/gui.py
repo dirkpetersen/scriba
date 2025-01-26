@@ -36,16 +36,7 @@ class GUI:
                 self.on_exit_callback()
             icon.stop()
         
-        def language_handler(icon, item):
-            """Handle language selection"""
-            if self.on_language_callback:
-                new_lang = "de-DE" if self.current_language == "en-US" else "en-US"
-                self.current_language = new_lang
-                self.on_language_callback(new_lang)
-                # Recreate menu with updated text
-                icon.menu = self._create_menu(toggle_handler, language_handler, exit_handler)
-                
-        def _create_menu(self, toggle_handler, language_handler, exit_handler):
+        def create_menu():
             """Create the system tray menu"""
             return pystray.Menu(
                 pystray.MenuItem(
@@ -63,6 +54,15 @@ class GUI:
                     action=exit_handler
                 )
             )
+
+        def language_handler(icon, item):
+            """Handle language selection"""
+            if self.on_language_callback:
+                new_lang = "de-DE" if self.current_language == "en-US" else "en-US"
+                self.current_language = new_lang
+                self.on_language_callback(new_lang)
+                # Update menu with new text
+                icon.menu = create_menu()
                 
         self.icon = pystray.Icon(
             name='scriba',
