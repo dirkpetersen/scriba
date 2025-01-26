@@ -1,7 +1,7 @@
+import threading, time, logging
 from PIL import Image, ImageDraw
 import pystray
-import threading
-import logging
+import win32gui, win32con
 
 class GUI:
     def __init__(self, on_click_callback=None, on_exit_callback=None, on_language_callback=None):
@@ -109,3 +109,63 @@ class GUI:
                 self.icon.notify(message, title)
         except Exception as e:
             logging.error(f"Failed to show notification: {e}")
+
+    def show_notification_new(self, title, message, duration=3):
+        """
+        Shows a notification in the Windows system tray.
+        
+        Args:
+            title (str): The title of the notification
+            message (str): The message content
+            timeout (int): How long the notification should remain visible in seconds
+        """
+        # Window class name
+        wc = win32gui.WNDCLASS()
+        wc.lpszClassName = 'PythonTaskbar'
+        wc.lpfnWndProc = {
+            win32con.WM_DESTROY: lambda hwnd, msg, wparam, lparam: win32gui.PostQuitMessage(0)
+        }
+        
+        # Register the window class
+        try:
+            win32gui.RegisterClass(wc)
+            # Create the window
+            hwnd = win32gui.CreateWindow(
+                wc.lpszClassName,
+                'Notification',
+                win32con.WS_OVERLAPPED | win32con.WS_SYSMENU,
+                0, 0, win32con.CW_USEDEFAULT, win32con.CW_USEDEFAULT,
+                0, 0, 0, None
+            )
+            
+            # Create and show the notification
+            icon_flags = win32con.LR_LOADFROMFILE | win32con.LR_DEFAULTSIZE
+            hicon = win32gui.LoadIcon(0, win32con.IDI_APPLICATION)
+            
+            nid = (
+                hwnd,
+                0,
+                win32gui.NIF_ICON | win32gui.NIF_MESSAGE | win32gui.NIF_TIP | win32gui.NIF_INFO,
+                win32con.WM_USER + 20,
+                hicon,
+                'Tooltip',
+                message,
+                duration * 1000,
+                title
+            )
+            
+            # Add the notification to the system tray
+            win32gui.Shell_NotifyIcon(win32gui.NIM_ADD, nid)
+            
+            # Wait for the timeout
+            time.sleep(duration)
+            
+            # Remove the notification
+            win32gui.Shell_NotifyIcon(win32gui.NIM_DELETE, nid)
+            
+            # Destroy the window
+            win32gui.DestroyWindow(hwnd)
+            
+        finally:
+            # Unregister the window class
+            win32gui.UnregisterClass(wc.lpszClassName, None)
