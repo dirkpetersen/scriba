@@ -636,10 +636,12 @@ class Scriba:
                 headers = self._generate_websocket_headers()
                 request_url = self._create_transcribe_url()
                 
+                # Increase timeout for initial connection
                 async with websockets.connect(
                     request_url,
                     additional_headers=headers,
-                    ping_timeout=None
+                    ping_timeout=None,
+                    open_timeout=30  # 30 second timeout for initial handshake
                 ) as websocket:
                     logging.info("Connected to AWS Transcribe")
                     self.gui.show_notification(
@@ -661,6 +663,14 @@ class Scriba:
                         if await self._handle_connection_error(e, attempt):
                             continue
                     
+            except TimeoutError as e:
+                logging.error(f"Connection timeout: {e}")
+                # Use exponential backoff for timeout retries
+                retry_delay = min(300, 2 ** attempt)  # Cap at 5 minutes
+                logging.info(f"Retrying in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+                continue
+                
             except Exception as e:
                 if await self._handle_unexpected_error(e, attempt):
                     continue
