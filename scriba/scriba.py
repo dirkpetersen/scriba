@@ -544,6 +544,7 @@ class Scriba:
             self.audio.terminate()
         self.audio = pyaudio.PyAudio()
         self._reset_connection_state()
+        self._connection_attempts = 0  # Reset attempt counter
         await asyncio.sleep(self._backoff_time)
 
     def _generate_websocket_headers(self):
