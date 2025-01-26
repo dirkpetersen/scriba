@@ -42,14 +42,12 @@ class GUI:
                 new_lang = "de-DE" if self.current_language == "en-US" else "en-US"
                 self.current_language = new_lang
                 self.on_language_callback(new_lang)
-                # Update menu item text
-                item.text = "Switch to English" if new_lang == "de-DE" else "Switch to German"
+                # Recreate menu with updated text
+                icon.menu = self._create_menu(toggle_handler, language_handler, exit_handler)
                 
-        self.icon = pystray.Icon(
-            name='scriba',
-            icon=image,
-            title="Scriba (Ready)",
-            menu=pystray.Menu(
+        def _create_menu(self, toggle_handler, language_handler, exit_handler):
+            """Create the system tray menu"""
+            return pystray.Menu(
                 pystray.MenuItem(
                     text="Toggle Recording",
                     action=toggle_handler,
@@ -57,7 +55,7 @@ class GUI:
                     visible=True
                 ),
                 pystray.MenuItem(
-                    text="Switch to German",
+                    text="Switch to English" if self.current_language == "de-DE" else "Switch to German",
                     action=language_handler
                 ),
                 pystray.MenuItem(
@@ -65,6 +63,12 @@ class GUI:
                     action=exit_handler
                 )
             )
+                
+        self.icon = pystray.Icon(
+            name='scriba',
+            icon=image,
+            title="Scriba (Ready)",
+            menu=self._create_menu(toggle_handler, language_handler, exit_handler)
         )
         
     def start(self):
