@@ -84,23 +84,34 @@ class Scriba:
         
         # Check if running as PyInstaller executable
         if getattr(sys, 'frozen', False):
-            # Running as PyInstaller executable
-            log_file = os.path.join(pathlib.Path.home(), 'scriba-log.txt')
-            handler = RotatingFileHandler(
-                log_file,
-                maxBytes=1024*1024,  # 1MB max file size
-                backupCount=1
-            )
-            handler.setFormatter(logging.Formatter(log_format, date_format))
-            
-            # Configure root logger
-            root_logger = logging.getLogger()
-            root_logger.setLevel(LOGLEVEL)
-            root_logger.addHandler(handler)
-            
-            # Redirect stdout and stderr to log file
-            sys.stdout = open(log_file, 'a')
-            sys.stderr = sys.stdout
+            try:
+                # Running as PyInstaller executable
+                log_file = os.path.join(pathlib.Path.home(), 'scriba-log.txt')
+                handler = RotatingFileHandler(
+                    log_file,
+                    maxBytes=1024*1024,  # 1MB max file size
+                    backupCount=1,
+                    delay=True  # Don't open file until first emit
+                )
+                handler.setFormatter(logging.Formatter(log_format, date_format))
+                
+                # Configure root logger
+                root_logger = logging.getLogger()
+                root_logger.setLevel(LOGLEVEL)
+                root_logger.addHandler(handler)
+                
+                # Redirect stdout and stderr to log file
+                sys.stdout = open(log_file, 'a', buffering=1)  # Line buffered
+                sys.stderr = sys.stdout
+            except Exception as e:
+                print(f"Warning: Could not set up log file: {e}")
+                # Fall back to console logging
+                logging.basicConfig(
+                    stream=sys.stderr,
+                    level=LOGLEVEL,
+                    format=log_format,
+                    datefmt=date_format
+                )
         else:
             # Running as normal Python script
             logging.basicConfig(
@@ -289,16 +300,27 @@ class Scriba:
 
     def _init_audio_stream(self):
         """Initialize and configure the audio input stream"""
-        self.get_default_input_device_info()
-        stream = self.audio.open(
-            format=self.FORMAT,
-            channels=self.CHANNELS,
-            rate=self.RATE,
-            input=True,
-            frames_per_buffer=self.CHUNK
-        )
-        logging.info(f"Started recording with: {self.RATE}Hz, {self.CHANNELS} channels, chunk size: {self.CHUNK}")
-        return stream
+        try:
+            if hasattr(self, '_stream'):
+                try:
+                    self._stream.stop_stream()
+                    self._stream.close()
+                except:
+                    pass
+            
+            self.get_default_input_device_info()
+            self._stream = self.audio.open(
+                format=self.FORMAT,
+                channels=self.CHANNELS,
+                rate=self.RATE,
+                input=True,
+                frames_per_buffer=self.CHUNK
+            )
+            logging.info(f"Started recording with: {self.RATE}Hz, {self.CHANNELS} channels, chunk size: {self.CHUNK}")
+            return self._stream
+        except Exception as e:
+            logging.error(f"Error initializing audio stream: {e}")
+            raise
 
     def _process_voice_activity(self, is_active, voice_active, silence_frames):
         """Handle voice activity state changes and update GUI"""
@@ -357,14 +379,16 @@ class Scriba:
 
     async def record_and_stream(self, websocket):
         """Main audio recording and streaming loop"""
-        stream = self._init_audio_stream()
-        
         try:
+            stream = self._init_audio_stream()
+            if not stream or not stream.is_active():
+                raise RuntimeError("Failed to initialize audio stream")
+                
             consecutive_errors = 0
             voice_active = False
             silence_frames = 0
             
-            while self.running:
+            while self.running and stream.is_active():
                 try:
                     data = stream.read(self.CHUNK, exception_on_overflow=False)
                     if len(data) > 0:
