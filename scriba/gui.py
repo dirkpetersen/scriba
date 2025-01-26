@@ -1,15 +1,13 @@
-import threading, time, logging
+import threading, logging
 from PIL import Image, ImageDraw
 import pystray
-import win32gui, win32con
 
 class GUI:
-    def __init__(self, on_click_callback=None, on_exit_callback=None, on_language_callback=None):
+    def __init__(self, on_click_callback=None, on_exit_callback=None, language="en-US"):
         self.icon = None
         self.on_click_callback = on_click_callback
         self.on_exit_callback = on_exit_callback
-        self.on_language_callback = on_language_callback
-        self.current_language = "en-US"
+        self.current_language = language
         self._create_icon()
         
     def _create_base_image(self, color):
@@ -31,7 +29,7 @@ class GUI:
                 visible=True
             ),
             pystray.MenuItem(
-                text="Switch to English" if self.current_language == "de-DE" else "Switch to German",
+                text="Switch to English" if self.current_language != "en-US" else "Switch to German",
                 action=language_handler
             ),
             pystray.MenuItem(
@@ -57,10 +55,10 @@ class GUI:
         
         def language_handler(icon, item):
             """Handle language selection"""
-            if self.on_language_callback:
+            if self.language:
                 new_lang = "de-DE" if self.current_language == "en-US" else "en-US"
                 self.current_language = new_lang
-                self.on_language_callback(new_lang)
+                self.language(new_lang)
                 # Update menu with new text
                 icon.menu = self._create_menu(toggle_handler, language_handler, exit_handler)
                 
