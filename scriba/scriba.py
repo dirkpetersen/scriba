@@ -218,9 +218,11 @@ class Scriba:
                     sys.exit(1)
 
         # print(self.access_key, self.secret_key, self.session_token, self.region)
-            
         # Initialize PyAudio
         self.audio = pyaudio.PyAudio()
+        # Toggle if a full stop was set 
+        self.full_stop = False
+
 
     def convert_umlauts(self, text):
         return text.replace('ä','ae').replace('Ä','Ae').replace('ö','oe').replace('Ö','Oe').replace('ü','ue').replace('Ü','Ue').replace('ß','ss')
@@ -231,6 +233,10 @@ class Scriba:
             if is_partial:
                 logging.debug(f"Partial: {text}")
             else:
+                # tune sentence end and make 
+                sendtext = text if self.full_stop else text[0].lower() + text[1:]   
+                self.full_stop = sendtext.lower().rstrip('.') == "stop"
+                sendtext = "." if self.full_stop else sendtext
                 # Remove filler words and their variations, including at start of sentences
                 sendtext = re.sub(r'\b(hm+|mm+|oh|uh+|um+|ah+|er+|well+)\s*(?:[,.])?\s*', '', text, flags=re.IGNORECASE)
                 # Insert a space after punctuation if not already present
@@ -640,11 +646,11 @@ class Scriba:
                     compression=None  # Disable compression to reduce overhead
                 ) as websocket:
                     logging.info("Connected to AWS Transcribe")
-                    self.gui.show_notification(
-                        "Scriba",
-                        "Ready to record audio",
-                        duration=3
-                    )
+                    # self.gui.show_notification(
+                    #     "Scriba",
+                    #     "Ready to record audio",
+                    #     duration=3
+                    # )
                     logging.debug(f"Starting transcription session with URL: {request_url}")
                     
                     try:
@@ -667,11 +673,11 @@ class Scriba:
                 retry_delay = base_delay + jitter
                 
                 logging.info(f"Retrying in {retry_delay:.1f} seconds... (attempt {attempt})")
-                self.gui.show_notification(
-                    "Scriba",
-                    f"Connection failed. Retrying in {int(retry_delay)} seconds...",
-                    duration=2
-                )
+                # self.gui.show_notification(
+                #     "Scriba",
+                #     f"Connection failed. Retrying in {int(retry_delay)} seconds...",
+                #     duration=2
+                # )
                 await asyncio.sleep(retry_delay)
                 continue
                 
@@ -804,6 +810,12 @@ class Scriba:
             
             print("\nScriba started. Press Ctrl+Shift+X to stop.")
             print("Listening for audio input...")
+
+            self.gui.show_notification(
+                "Scriba",
+                f"Ready for {self._current_language} transcription in current window",
+                duration=3
+            )
             
             try:
                 loop.run_until_complete(self.connect_to_websocket())
@@ -853,11 +865,12 @@ class Scriba:
         self.recording_enabled = not self.recording_enabled
         state = 'ready' if self.recording_enabled else 'disabled'
         self.gui.set_state(state)
-        self.gui.show_notification(
-            "Scriba",
-            f"Recording {state}",
-            duration=2
-        )
+        if not self.recording_enabled:
+            self.gui.show_notification(
+                "Scriba",
+                f"Recording {state}",
+                duration=1
+            )
         logging.info(f"Recording {state}")
         
     
