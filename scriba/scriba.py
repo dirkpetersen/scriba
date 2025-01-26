@@ -631,7 +631,7 @@ class Scriba:
         while self.running:
             try:
                 attempt += 1
-                logging.info(f"Connecting to AWS Transcribe (attempt {attempt}/{self._max_retries})")
+                logging.info(f"Connecting to AWS Transcribe ... ")
                 
                 headers = self._generate_websocket_headers()
                 request_url = self._create_transcribe_url()
