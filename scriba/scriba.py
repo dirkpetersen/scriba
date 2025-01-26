@@ -887,6 +887,13 @@ def main():
     import win32api
     import winerror
     import sys
+    import argparse
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Scriba - Real-time speech transcription')
+    parser.add_argument('--language', default='en-US', choices=['en-US', 'de-DE'],
+                      help='Transcription language (default: en-US)')
+    args = parser.parse_args()
     
     mutex_name = "Global\\ScribaSingleInstance"
     mutex = win32event.CreateMutex(None, False, mutex_name)
@@ -903,6 +910,7 @@ def main():
     
     try:
         scriba = Scriba()
+        scriba._current_language = args.language  # Set initial language from command line
         scriba.start()
     finally:
         # Release the mutex when the program exits
