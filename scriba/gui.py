@@ -55,10 +55,10 @@ class GUI:
         
         def language_handler(icon, item):
             """Handle language selection"""
-            if self.language:
+            if self.on_language_callback:
                 new_lang = "de-DE" if self.current_language == "en-US" else "en-US"
                 self.current_language = new_lang
-                self.language(new_lang)
+                self.on_language_callback(new_lang)
                 # Update menu with new text
                 icon.menu = self._create_menu(toggle_handler, language_handler, exit_handler)
                 
