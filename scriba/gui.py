@@ -4,10 +4,12 @@ import threading
 import logging
 
 class GUI:
-    def __init__(self, on_click_callback=None, on_exit_callback=None):
+    def __init__(self, on_click_callback=None, on_exit_callback=None, on_language_callback=None):
         self.icon = None
         self.on_click_callback = on_click_callback
         self.on_exit_callback = on_exit_callback
+        self.on_language_callback = on_language_callback
+        self.current_language = "en-US"
         self._create_icon()
         
     def _create_base_image(self, color):
@@ -34,6 +36,15 @@ class GUI:
                 self.on_exit_callback()
             icon.stop()
         
+        def language_handler(icon, item):
+            """Handle language selection"""
+            if self.on_language_callback:
+                new_lang = "de-DE" if self.current_language == "en-US" else "en-US"
+                self.current_language = new_lang
+                self.on_language_callback(new_lang)
+                # Update menu item text
+                item.text = "Switch to English" if new_lang == "de-DE" else "Switch to German"
+                
         self.icon = pystray.Icon(
             name='scriba',
             icon=image,
@@ -44,6 +55,10 @@ class GUI:
                     action=toggle_handler,
                     default=True,
                     visible=True
+                ),
+                pystray.MenuItem(
+                    text="Switch to German",
+                    action=language_handler
                 ),
                 pystray.MenuItem(
                     text="Exit",

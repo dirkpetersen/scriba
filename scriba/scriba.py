@@ -74,6 +74,9 @@ class Scriba:
         self._max_retries = 10
         self._retry_delay = 2
         
+        # Language settings
+        self._current_language = "en-US"  # Default to English
+        
         # AWS Transcribe billing optimization
         self._minute_start_time = 0
         self._in_billable_minute = False
@@ -189,7 +192,7 @@ class Scriba:
         self.sent_sentences = set()  # Track sent sentences
         
         # Initialize GUI        
-        self.gui = GUI(self.toggle_recording, self.stop)
+        self.gui = GUI(self.toggle_recording, self.stop, self.switch_language)
         self.gui.start()
         self.gui.show_notification(
             "Scriba",
@@ -564,7 +567,7 @@ class Scriba:
         
         return transcribe_url_generator.get_request_url(
             sample_rate=self.RATE,
-            language_code="en-US",  #en-US deactivate if you want to detect the language
+            language_code=self._current_language,  # en-US or de-DE
             identify_language=False,
             identify_multiple_languages= False,
             language_options="",  # en-US,de-DE
@@ -842,6 +845,20 @@ class Scriba:
         )
         logging.info(f"Recording {state}")
         
+    def switch_language(self, new_language):
+        """Switch between English and German"""
+        self._current_language = new_language
+        logging.info(f"Switched language to: {new_language}")
+        self.gui.show_notification(
+            "Scriba",
+            f"Switched to {'German' if new_language == 'de-DE' else 'English'}",
+            duration=2
+        )
+        # Force reconnection to apply new language
+        if self.running:
+            asyncio.run_coroutine_threadsafe(self._reinitialize_stream(), 
+                asyncio.get_event_loop())
+    
     def stop(self):
         """Stop the voice transcription service"""
         try:
