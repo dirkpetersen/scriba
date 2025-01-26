@@ -9,6 +9,7 @@ class GUI:
         self.on_exit_callback = on_exit_callback
         self.on_language_callback = on_language_callback
         self.current_language = language
+        self._initial_language = language  # Store initial language separately
         self._create_icon()
         
     def _create_base_image(self, color):
@@ -30,7 +31,7 @@ class GUI:
                 visible=True
             ),
             pystray.MenuItem(
-                text="Switch to English" if self.current_language != "en-US" else "Switch to German",
+                text="Switch to English" if self.current_language == "de-DE" else "Switch to German",
                 action=language_handler
             ),
             pystray.MenuItem(
