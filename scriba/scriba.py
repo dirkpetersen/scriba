@@ -856,8 +856,12 @@ class Scriba:
         )
         # Force reconnection to apply new language
         if self.running:
-            asyncio.run_coroutine_threadsafe(self._reinitialize_stream(), 
-                asyncio.get_event_loop())
+            try:
+                # Get the running event loop from the main thread
+                loop = asyncio.get_running_loop()
+                asyncio.run_coroutine_threadsafe(self._reinitialize_stream(), loop)
+            except RuntimeError:
+                logging.warning("Could not get event loop - language change will apply on next connection")
     
     def stop(self):
         """Stop the voice transcription service"""
