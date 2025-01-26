@@ -85,27 +85,77 @@ class Scriba:
         # Check if running as PyInstaller executable
         if getattr(sys, 'frozen', False):
             try:
-                # Running as PyInstaller executable
-                log_file = os.path.join(pathlib.Path.home(), 'scriba-log.txt')
-                handler = RotatingFileHandler(
-                    log_file,
-                    maxBytes=1024*1024,  # 1MB max file size
-                    backupCount=1,
-                    delay=True  # Don't open file until first emit
-                )
-                handler.setFormatter(logging.Formatter(log_format, date_format))
+                import threading
+                import queue
                 
-                # Configure root logger
+                # Create a queue for log messages
+                self.log_queue = queue.Queue()
+                
+                # Create a QueueHandler to send logs to our queue
+                queue_handler = logging.handlers.QueueHandler(self.log_queue)
+                
+                # Configure root logger with queue handler
                 root_logger = logging.getLogger()
                 root_logger.setLevel(LOGLEVEL)
-                root_logger.addHandler(handler)
+                root_logger.addHandler(queue_handler)
                 
-                # Redirect stdout and stderr to log file
-                sys.stdout = open(log_file, 'a', buffering=1)  # Line buffered
-                sys.stderr = sys.stdout
+                # Set up file handler in a separate thread
+                def logger_thread():
+                    log_file = os.path.join(pathlib.Path.home(), 'scriba-log.txt')
+                    try:
+                        # Create rotating file handler
+                        file_handler = RotatingFileHandler(
+                            log_file,
+                            maxBytes=1024*1024,  # 1MB max file size
+                            backupCount=1,
+                            delay=True  # Don't open file until first emit
+                        )
+                        file_handler.setFormatter(logging.Formatter(log_format, date_format))
+                        
+                        # Create console handler for stdout/stderr
+                        console_handler = logging.StreamHandler(sys.stderr)
+                        console_handler.setFormatter(logging.Formatter(log_format, date_format))
+                        
+                        # Process log records from the queue
+                        while True:
+                            try:
+                                record = self.log_queue.get()
+                                if record is None:  # Shutdown signal
+                                    break
+                                    
+                                # Write to both file and console
+                                try:
+                                    file_handler.emit(record)
+                                except Exception as e:
+                                    print(f"Error writing to log file: {e}")
+                                    
+                                try:
+                                    console_handler.emit(record)
+                                except Exception as e:
+                                    print(f"Error writing to console: {e}")
+                                    
+                            except Exception as e:
+                                print(f"Error in logger thread: {e}")
+                                
+                    except Exception as e:
+                        print(f"Failed to initialize file logging: {e}")
+                        # Continue with just console output
+                        while True:
+                            record = self.log_queue.get()
+                            if record is None:
+                                break
+                            try:
+                                console_handler.emit(record)
+                            except Exception:
+                                pass
+                
+                # Start logger thread
+                self.logger_thread = threading.Thread(target=logger_thread, daemon=True)
+                self.logger_thread.start()
+                
             except Exception as e:
-                print(f"Warning: Could not set up log file: {e}")
-                # Fall back to console logging
+                print(f"Warning: Could not set up logging system: {e}")
+                # Fall back to basic console logging
                 logging.basicConfig(
                     stream=sys.stderr,
                     level=LOGLEVEL,
@@ -666,6 +716,14 @@ class Scriba:
             
         self.running = False
         logging.info("Cleaning up resources...")
+        
+        # Shutdown logging queue if it exists
+        if hasattr(self, 'log_queue'):
+            try:
+                self.log_queue.put(None)  # Signal logger thread to stop
+                self.logger_thread.join(timeout=5.0)  # Wait for logger thread
+            except Exception as e:
+                print(f"Error shutting down logger: {e}")
         
         try:
             # Cancel all tasks except the current one
