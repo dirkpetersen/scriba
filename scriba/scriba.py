@@ -859,9 +859,14 @@ class Scriba:
             try:
                 # Get the running event loop from the main thread
                 loop = asyncio.get_running_loop()
-                asyncio.run_coroutine_threadsafe(self._reinitialize_stream(), loop)
+                #asyncio.run_coroutine_threadsafe(self._reinitialize_stream(), loop)
+                #await self._reinitialize_stream() 
+                asyncio.run_coroutine_threadsafe(self._reset_connection_state, loop)
+                #await self._reset_connection_state()
             except RuntimeError:
                 logging.warning("Could not get event loop - language change will apply on next connection")
+        #else:            
+        #    await asyncio.sleep(1)
     
     def stop(self):
         """Stop the voice transcription service"""
