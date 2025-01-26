@@ -233,10 +233,25 @@ class Scriba:
             if is_partial:
                 logging.debug(f"Partial: {text}")
             else:
-                # tune sentence end and make 
-                sendtext = text if self.full_stop else text[0].lower() + text[1:]   
-                self.full_stop = sendtext.lower().rstrip('.') == "stop"
-                sendtext = "." if self.full_stop else sendtext
+                # Handle capitalization and periods based on "stop" command
+                text_lower = text.lower().rstrip('.')
+                is_stop_command = text_lower == "stop"
+                
+                if is_stop_command:
+                    sendtext = "."  # Just send a period for "stop" command
+                else:
+                    # Capitalize only if previous was "stop"
+                    if self.full_stop:
+                        sendtext = text  # Keep original capitalization
+                    else:
+                        sendtext = text[0].lower() + text[1:]  # Force lowercase start
+                    
+                    # Remove trailing period unless it's explicitly in the speech
+                    if sendtext.endswith('.') and not text.endswith('period'):
+                        sendtext = sendtext[:-1]
+                        
+                # Update stop state for next transcript
+                self.full_stop = is_stop_command
                 # Remove filler words and their variations, including at start of sentences
                 sendtext = re.sub(r'\b(hm+|mm+|oh|uh+|um+|ah+|er+|well+)\s*(?:[,.])?\s*', '', text, flags=re.IGNORECASE)
                 # Insert a space after punctuation if not already present
