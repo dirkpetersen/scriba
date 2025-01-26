@@ -912,7 +912,12 @@ def main():
     try:
         scriba = Scriba()
         scriba._current_language = args.language  # Set initial language from command line
-        scriba.gui.current_language = args.language  # Update GUI language state
+        scriba.gui = GUI(
+            on_click_callback=scriba.toggle_recording,
+            on_exit_callback=scriba.stop,
+            on_language_callback=scriba.switch_language,
+            language=args.language
+        )
         scriba.start()
     finally:
         # Release the mutex when the program exitsMa. 
