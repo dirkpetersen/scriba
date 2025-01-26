@@ -189,12 +189,12 @@ class Scriba:
         self.sent_sentences = set()  # Track sent sentences
         
         # Initialize GUI        
-        self.gui = GUI(self.toggle_recording, self.stop, self._current_language)
+        # self.gui = GUI(self.toggle_recording, self.stop, self._current_language)
         self.gui.start()
-        self.gui.show_notification(
-            "Scriba",
-            "Ready to transcribe audio"
-        )
+        # self.gui.show_notification(
+        #     "Scriba",
+        #     "Ready to transcribe audio"
+        # )
         self.silence_threshold = 300  # Lower threshold for audio activity
         self.debug_audio = False  # Disable audio level debugging
         
