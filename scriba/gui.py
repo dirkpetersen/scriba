@@ -3,10 +3,11 @@ from PIL import Image, ImageDraw
 import pystray
 
 class GUI:
-    def __init__(self, on_click_callback=None, on_exit_callback=None, language="en-US"):
+    def __init__(self, on_click_callback=None, on_exit_callback=None, on_language_callback=None, language="en-US"):
         self.icon = None
         self.on_click_callback = on_click_callback
         self.on_exit_callback = on_exit_callback
+        self.on_language_callback = on_language_callback
         self.current_language = language
         self._create_icon()
         
