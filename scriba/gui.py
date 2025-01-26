@@ -3,13 +3,11 @@ from PIL import Image, ImageDraw
 import pystray
 
 class GUI:
-    def __init__(self, on_click_callback=None, on_exit_callback=None, on_language_callback=None, language="en-US"):
+    def __init__(self, on_click_callback=None, on_exit_callback=None, language="en-US"):
         self.icon = None
         self.on_click_callback = on_click_callback
         self.on_exit_callback = on_exit_callback
-        self.on_language_callback = on_language_callback
         self.current_language = language
-        self._initial_language = language  # Store initial language separately
         self._create_icon()
         
     def _create_base_image(self, color):
@@ -21,7 +19,7 @@ class GUI:
         dc.ellipse([4, 4, width-4, height-4], fill=color)
         return image
         
-    def _create_menu(self, toggle_handler, language_handler, exit_handler):
+    def _create_menu(self, toggle_handler, exit_handler):
         """Create the system tray menu"""
         return pystray.Menu(
             pystray.MenuItem(
@@ -29,10 +27,6 @@ class GUI:
                 action=toggle_handler,
                 default=True,
                 visible=True
-            ),
-            pystray.MenuItem(
-                text="Switch to English" if self.current_language == "de-DE" else "Switch to German",
-                action=language_handler
             ),
             pystray.MenuItem(
                 text="Exit",
@@ -68,7 +62,7 @@ class GUI:
             name='scriba',
             icon=image,
             title="Scriba (Ready)",
-            menu=self._create_menu(toggle_handler, language_handler, exit_handler)
+            menu=self._create_menu(toggle_handler, exit_handler)
         )
         
     def start(self):

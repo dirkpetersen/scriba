@@ -865,15 +865,6 @@ class Scriba:
         )
         logging.info(f"Recording {state}")
         
-    def switch_language(self, new_language):
-        """Switch between English and German"""
-        self._current_language = new_language
-        logging.info(f"Switched language to: {new_language}")
-        self.gui.show_notification(
-            "Scriba",
-            f"Switched to {'German' if new_language == 'de-DE' else 'English'}. Will be activate at next disconnect",
-            duration=2
-        )
     
     def stop(self):
         """Stop the voice transcription service"""
@@ -915,7 +906,6 @@ def main():
         scriba.gui = GUI(
             on_click_callback=scriba.toggle_recording,
             on_exit_callback=scriba.stop,
-            on_language_callback=scriba.switch_language,
             language=args.language
         )
         scriba.start()
