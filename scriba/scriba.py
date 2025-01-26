@@ -227,18 +227,22 @@ class Scriba:
         # Initialize PyAudio
         self.audio = pyaudio.PyAudio()
 
+    def convert_umlauts(self, text):
+        return text.replace('ä','ae').replace('Ä','Ae').replace('ö','oe').replace('Ö','Oe').replace('ü','ue').replace('Ü','Ue').replace('ß','ss')
+
     def process_transcript(self, text: str, is_partial: bool) -> None:
         """Process / correct / modify transcript text"""
         try:
-            # Remove filler words and their variations, including at start of sentences
-            sendtext = re.sub(r'\b(hm+|mm+|oh|uh+|um+|ah+|er+|well+)\s*(?:[,.])?\s*', '', text, flags=re.IGNORECASE)
-            # Insert a space after punctuation if not already present
-            sendtext = re.sub(r'([.?!])(?![\s"])', r'\1 ', sendtext)            
             if is_partial:
                 logging.debug(f"Partial: {text}")
             else:
+                # Remove filler words and their variations, including at start of sentences
+                sendtext = re.sub(r'\b(hm+|mm+|oh|uh+|um+|ah+|er+|well+)\s*(?:[,.])?\s*', '', text, flags=re.IGNORECASE)
+                # Insert a space after punctuation if not already present
+                sendtext = re.sub(r'([.?!])(?![\s"])', r'\1 ', sendtext)
+                sendtext = self.convert_umlauts(sendtext)
                 # Add a single white space at the end of a string if it doesn't already exist,
-                sendtext = re.sub(r'([^ ])$', r'\1 ', sendtext)
+                #sendtext = re.sub(r'([^ ])$', r'\1 ', sendtext)
                 self.send_keystrokes_win32(sendtext)               
                 logging.info(f"Transcript: {sendtext}")
                         
@@ -560,7 +564,11 @@ class Scriba:
         
         return transcribe_url_generator.get_request_url(
             sample_rate=self.RATE,
-            language_code="en-US",
+            language_code="en-US",  #en-US deactivate if you want to detect the language
+            identify_language=False,
+            identify_multiple_languages= False,
+            language_options="",  # en-US,de-DE
+            preferred_language="", # en-US
             media_encoding="pcm",
             number_of_channels=self.CHANNELS,
             enable_channel_identification=False,
