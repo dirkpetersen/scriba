@@ -29,6 +29,10 @@ class GUI:
                 visible=True
             ),
             pystray.MenuItem(
+                text="Switch to German" if self.current_language == "en-US" else "Switch to English",
+                action=self.on_click_callback
+            ),
+            pystray.MenuItem(
                 text="Exit",
                 action=exit_handler
             )

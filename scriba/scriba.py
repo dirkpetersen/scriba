@@ -877,18 +877,31 @@ class Scriba:
                 loop.close()
                 print("Scriba shutdown complete.")
     
-    def toggle_recording(self):
+    def toggle_recording(self, icon=None, item=None):
         """Toggle recording state when icon is clicked"""
-        self.recording_enabled = not self.recording_enabled
-        state = 'ready' if self.recording_enabled else 'disabled'
-        self.gui.set_state(state)
-        if not self.recording_enabled:
+        if item and item.text.startswith("Switch to"):
+            new_lang = "de-DE" if self._current_language == "en-US" else "en-US"
+            self._current_language = new_lang
+            self.language_switched = True
+            self.gui.current_language = new_lang
             self.gui.show_notification(
                 "Scriba",
-                f"Recording {state}",
-                duration=1
+                f"Switching to {self._current_language} in the next cloud connection",
+                duration=3
             )
-        logging.info(f"Recording {state}")
+            # Update menu text
+            icon.menu = self.gui._create_menu(self.toggle_recording, self.stop)
+        else:
+            self.recording_enabled = not self.recording_enabled
+            state = 'ready' if self.recording_enabled else 'disabled'
+            self.gui.set_state(state)
+            if not self.recording_enabled:
+                self.gui.show_notification(
+                    "Scriba",
+                    f"Recording {state}",
+                    duration=1
+                )
+            logging.info(f"Recording {state}")
         
     
     def stop(self):
