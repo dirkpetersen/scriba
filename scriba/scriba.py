@@ -11,7 +11,7 @@ from eventstream import create_audio_event, decode_event
 from gui import GUI
 from windows import send_keystrokes_win32
 
-LOGLEVEL=logging.INFO  # logging.INFO or logging.DEBUG
+LOGLEVEL=logging.INFO  # logging.INFO or logging.DEBUG or logging.ERROR
 
 class Scriba:
 
@@ -366,7 +366,10 @@ class Scriba:
                 logging.debug(f"Received message type: {header[':message-type']}")
                 if header[":message-type"] == 'exception':
                     error_msg = payload['Message']
-                    logging.error(f"AWS Exception: {error_msg}")
+                    if error_msg.startswith("Your request timed out because no new audio was received for"):
+                        logging.info(f"AWS Timeout: {error_msg}")
+                    else:
+                        logging.error(f"AWS Exception: {error_msg}")
                     if "The security token included in the request is invalid" in error_msg:
                         logging.error("Invalid AWS credentials - exiting")
                         self.gui.show_notification(
