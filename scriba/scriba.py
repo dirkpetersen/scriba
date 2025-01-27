@@ -234,8 +234,7 @@ class Scriba:
                 logging.debug(f"Partial: {text}")
             else:
                 # Handle capitalization and periods based on "stop" command
-                sendtext  = text.rstrip('.')
-                sendtext = "," if sendtext.lower() == "comma" else sendtext
+                sendtext  = text.rstrip('.')                
                 if sendtext.lower() == "period":
                     sendtext = "."  # Just send a period for "stop" command
                     self.full_stop = True
@@ -244,8 +243,9 @@ class Scriba:
                     if not self.full_stop:
                         sendtext = " " + sendtext[0].lower() + sendtext[1:]
                     else:
-                        sendtext = " " + sendtext if sendtext != "," else sendtext
+                        sendtext = " " + sendtext 
                     self.full_stop = False
+                sendtext = "," if sendtext.strip().lower() == "comma" else sendtext
                 # Remove filler words and their variations, including at start of sentences
                 sendtext = re.sub(r'\b(hm+|mm+|oh|uh+|um+|ah+|er+|well+)\s*(?:[,.])?\s*', '', sendtext, flags=re.IGNORECASE)
                 # Insert a space after punctuation if not already present
@@ -257,7 +257,7 @@ class Scriba:
                 logging.info(f"Transcript: {sendtext}")
                         
         except Exception as e:
-            logging.error(f"Error processing transcript: {e}")
+            logging.error(f"Error processing transcript:  {e}")
 
 
     def send_keystrokes_win32(self, text):
