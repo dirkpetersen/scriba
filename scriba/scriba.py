@@ -5,9 +5,11 @@ from logging.handlers import RotatingFileHandler
 import websockets
 import pyaudio
 import keyboard
+import win32api, win32event, winerror
 from presigned_url import AWSTranscribePresignedURL
 from eventstream import create_audio_event, decode_event
-import win32api, win32event, winerror
+from gui import GUI
+from windows import send_keystrokes_win32
 
 LOGLEVEL=logging.INFO  # logging.INFO or logging.DEBUG
 
