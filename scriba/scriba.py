@@ -236,6 +236,12 @@ class Scriba:
             return default_input
         except Exception as e:
             logging.error(f"Error getting input device info: {e}")
+            self.gui.show_notification(
+                "Scriba Error",
+                "No microphone found. Please connect a microphone and restart Scriba.",
+                duration=5
+            )
+            self.running = False
             return None
 
     def is_audio_active(self, audio_data):
@@ -254,7 +260,9 @@ class Scriba:
                 except:
                     pass
             
-            self.get_default_input_device_info()
+            if not self.get_default_input_device_info():
+                return None
+                
             self._stream = self.audio.open(
                 format=self.FORMAT,
                 channels=self.CHANNELS,
@@ -266,7 +274,13 @@ class Scriba:
             return self._stream
         except Exception as e:
             logging.error(f"Error initializing audio stream: {e}")
-            raise
+            self.gui.show_notification(
+                "Scriba Error",
+                "Failed to initialize microphone. Please check your audio settings.",
+                duration=5
+            )
+            self.running = False
+            return None
 
     def _process_voice_activity(self, is_active, voice_active, silence_frames):
         """Handle voice activity state changes and update GUI"""
