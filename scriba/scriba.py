@@ -1,19 +1,13 @@
 # Note: This App runs on Windows OS
 
-import os, sys, logging, string, random, configparser, asyncio, pathlib, re, argparse
+import os, sys, logging, string, random, configparser, asyncio, pathlib, re, argparse, time
 from logging.handlers import RotatingFileHandler
 import websockets
 import pyaudio
 import keyboard
-import win32api, win32con, win32gui, win32process, win32event, winerror
-import ctypes
-from ctypes import wintypes
-import time
 from presigned_url import AWSTranscribePresignedURL
 from eventstream import create_audio_event, decode_event
-from gui import GUI
-from windows import send_keystrokes_win32
-import win32api, win32con, win32gui, win32process, win32event, winerror
+import win32api, win32event, winerror
 
 LOGLEVEL=logging.INFO  # logging.INFO or logging.DEBUG
 
