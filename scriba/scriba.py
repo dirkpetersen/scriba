@@ -73,6 +73,7 @@ class Scriba:
         
         # Language settings
         self._current_language = "en-US"  # Default to English
+        self.language_switched = False 
         
         # AWS Transcribe billing optimization
         self._minute_start_time = 0
@@ -660,11 +661,13 @@ class Scriba:
                     compression=None  # Disable compression to reduce overhead
                 ) as websocket:
                     logging.info("Connected to AWS Transcribe")
-                    # self.gui.show_notification(
-                    #     "Scriba",
-                    #     "Ready to record audio",
-                    #     duration=3
-                    # )
+                    if self.language_switched:
+                        self.gui.show_notification(
+                            "Scriba",
+                            "Language switched to " + self._current_language,
+                            duration=1
+                        )
+                        self.language_switched = False
                     logging.debug(f"Starting transcription session with URL: {request_url}")
                     
                     try:
