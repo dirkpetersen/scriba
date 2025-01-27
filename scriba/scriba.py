@@ -195,13 +195,13 @@ class Scriba:
             if is_partial: 
                 logging.debug(f"Partial: {text}")
             else:
-                tperiod = ["period", "and period", "punkt", "und punkt"]
+                tperiod = ("period", "and period", "punkt", "und punkt")
                 # Handle capitalization and periods based on "period" command
                 sendtext  = text.rstrip('.')
                 if sendtext.lower() in tperiod:
                     sendtext = "."  # Just send a period for "period" command
                     self.full_stop = True
-                elif sendtext.lower().endswith(tperiod):
+                elif any(sendtext.lower().endswith(p) for p in tperiod):
                     sendtext = sendtext[:-6]
                     if sendtext.lower().endswith(', '):
                         sendtext = sendtext[:-2]                        
