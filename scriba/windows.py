@@ -1,5 +1,11 @@
 import logging
 import time
+import ctypes
+from ctypes import wintypes
+import win32con
+import win32gui
+import win32api
+import win32process
 
 # C struct definitions
 if not hasattr(wintypes, 'ULONG_PTR'):
