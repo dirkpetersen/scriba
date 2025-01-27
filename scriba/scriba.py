@@ -195,34 +195,33 @@ class Scriba:
             if is_partial: 
                 logging.debug(f"Partial: {text}")
             else:
-                # Handle capitalization and periods based on "stop" command
+                tperiod = ["period", "and period", "punkt", "und punkt"]
+                # Handle capitalization and periods based on "period" command
                 sendtext  = text.rstrip('.')
-                if sendtext.lower() == "period":
-                    sendtext = "."  # Just send a period for "stop" command
+                if sendtext.lower() in tperiod:
+                    sendtext = "."  # Just send a period for "period" command
                     self.full_stop = True
-                elif sendtext.lower().endswith('period'):
+                elif sendtext.lower().endswith(tperiod):
                     sendtext = sendtext[:-6]
                     if sendtext.lower().endswith(', '):
                         sendtext = sendtext[:-2]                        
                     sendtext = sendtext.strip()+'.' 
                     sendtext = " " + sendtext 
-                    self.full_stop = True
-                # Capitalize only if previous was "stop"       
+                    self.full_stop = True                
                 else: 
                     if not self.full_stop:
                         sendtext = " " + sendtext[0].lower() + sendtext[1:]
                     else:
                         sendtext = " " + sendtext 
                     self.full_stop = False
-                sendtext = "," if sendtext.strip().lower() == "comma" else sendtext
+                sendtext = "," if sendtext.strip().lower() in ["comma", "komma"] else sendtext
                 # Remove filler words and their variations, including at start of sentences
                 sendtext = re.sub(r'\b(hm+|mm+|oh|uh+|um+|ah+|er+|well+)\s*(?:[,.])?\s*', '', sendtext, flags=re.IGNORECASE)
-                # Insert a space after punctuation if not already present
-                #sendtext = re.sub(r'([.?!])(?![\s"])', r'\1 ', sendtext)
-                sendtext = self.convert_umlauts(sendtext)
+                if self._current_language.startswith("de-"):
+                    sendtext = self.convert_umlauts(sendtext)                
                 send_keystrokes_win32(sendtext)
                 logging.info(f"Transcript: {sendtext}")
-                        
+
         except Exception as e:
             logging.error(f"Error processing transcript:  {e}")
 
