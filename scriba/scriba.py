@@ -12,6 +12,7 @@ import time
 from presigned_url import AWSTranscribePresignedURL
 from eventstream import create_audio_event, decode_event
 from gui import GUI
+from windows import send_keystrokes_win32
 import win32api, win32con, win32gui, win32process, win32event, winerror
 
 LOGLEVEL=logging.INFO  # logging.INFO or logging.DEBUG
