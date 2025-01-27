@@ -15,7 +15,7 @@ from gui import GUI
 
 user32 = ctypes.WinDLL('user32', use_last_error=True)
 
-LOGLEVEL=logging.DEBUG # logging.INFO or logging.DEBUG
+LOGLEVEL=logging.INFO  # logging.INFO or logging.DEBUG
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 
@@ -230,36 +230,30 @@ class Scriba:
     def process_transcript(self, text: str, is_partial: bool) -> None:
         """Process / correct / modify transcript text"""
         try:
-            if is_partial:
+            if is_partial: 
                 logging.debug(f"Partial: {text}")
             else:
                 # Handle capitalization and periods based on "stop" command
-                text_lower = text.lower().rstrip('.')
-                is_stop_command = text_lower == "stop"
-                
-                if is_stop_command:
+                sendtext  = text.rstrip('.')
+                sendtext = "," if sendtext.lower() == "comma" else sendtext
+                if sendtext.lower() == "period":
                     sendtext = "."  # Just send a period for "stop" command
-                else:
-                    # Capitalize only if previous was "stop"
-                    if self.full_stop:
-                        sendtext = text  # Keep original capitalization
+                    self.full_stop = True
+                # Capitalize only if previous was "stop"       
+                else: 
+                    if not self.full_stop:
+                        sendtext = " " + sendtext[0].lower() + sendtext[1:]
                     else:
-                        sendtext = text[0].lower() + text[1:]  # Force lowercase start
-                    
-                    # Remove trailing period unless it's explicitly in the speech
-                    if sendtext.endswith('.') and not text.endswith('period'):
-                        sendtext = sendtext[:-1]
-                        
-                # Update stop state for next transcript
-                self.full_stop = is_stop_command
+                        sendtext = " " + sendtext if sendtext != "," else sendtext
+                    self.full_stop = False
                 # Remove filler words and their variations, including at start of sentences
-                sendtext = re.sub(r'\b(hm+|mm+|oh|uh+|um+|ah+|er+|well+)\s*(?:[,.])?\s*', '', text, flags=re.IGNORECASE)
+                sendtext = re.sub(r'\b(hm+|mm+|oh|uh+|um+|ah+|er+|well+)\s*(?:[,.])?\s*', '', sendtext, flags=re.IGNORECASE)
                 # Insert a space after punctuation if not already present
-                sendtext = re.sub(r'([.?!])(?![\s"])', r'\1 ', sendtext)
+                #sendtext = re.sub(r'([.?!])(?![\s"])', r'\1 ', sendtext)
                 sendtext = self.convert_umlauts(sendtext)
                 # Add a single white space at the end of a string if it doesn't already exist,
                 #sendtext = re.sub(r'([^ ])$', r'\1 ', sendtext)
-                self.send_keystrokes_win32(sendtext)               
+                self.send_keystrokes_win32(sendtext)
                 logging.info(f"Transcript: {sendtext}")
                         
         except Exception as e:
