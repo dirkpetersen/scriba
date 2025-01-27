@@ -235,14 +235,15 @@ class Scriba:
             else:
                 # Handle capitalization and periods based on "stop" command
                 sendtext  = text.rstrip('.')
-                if sendtext.lower().endswith('period'):
+                if sendtext.lower() == "period":
+                    sendtext = "."  # Just send a period for "stop" command
+                    self.full_stop = True
+                elif sendtext.lower().endswith('period'):
                     sendtext = sendtext[:-6]
                     if sendtext.lower().endswith(', '):
                         sendtext = sendtext[:-2]                        
                     sendtext = sendtext.strip()+'.' 
-                    self.full_stop = True
-                if sendtext.lower() == "period":
-                    sendtext = "."  # Just send a period for "stop" command
+                    sendtext = " " + sendtext 
                     self.full_stop = True
                 # Capitalize only if previous was "stop"       
                 else: 
