@@ -192,6 +192,7 @@ class Scriba:
                 logging.debug(f"Partial: {text}")
             else:
                 tperiod = ("period", "and period", "punkt", "und punkt")
+                tcomma = ("comma", "and comma", "komma", "und komma")
                 # Handle capitalization and periods based on "period" command
                 sendtext  = text.rstrip('.')
                 if sendtext.lower() in tperiod:
@@ -210,7 +211,8 @@ class Scriba:
                     else:
                         sendtext = " " + sendtext 
                     self.full_stop = False
-                sendtext = "," if sendtext.strip().lower() in ["comma", "komma"] else sendtext
+                # Handle commas based on "comma" command
+                sendtext = "," if sendtext.strip().lower() in tcomma else sendtext
                 # Remove filler words and their variations, including at start of sentences
                 sendtext = re.sub(r'\b(hm+|mm+|oh|uh+|um+|ah+|er+|well+)\s*(?:[,.])?\s*', '', sendtext, flags=re.IGNORECASE)
                 if self._current_language.startswith("de-"):
