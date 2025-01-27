@@ -77,7 +77,7 @@ class GUI:
             'ready': 'Scriba (Ready)',
             'active': 'Scriba (Active)', 
             'disabled': 'Scriba (Disabled)',
-            'timeout': 'Scriba (Connection Timeout)'
+            'timeout': 'Scriba (Cloud Disconnected)'
         }
         
         if state in colors:

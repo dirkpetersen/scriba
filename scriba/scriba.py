@@ -905,8 +905,7 @@ def main():
     
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Scriba - Real-time speech transcription')
-    parser.add_argument('--language', default='en-US', choices=['en-US', 'de-DE'],
-                      help='Transcription language (default: en-US)')
+    parser.add_argument('--language', default='en-US', help='Transcription language (default: en-US)')
     args = parser.parse_args()
     
     mutex_name = "Global\\ScribaSingleInstance"
