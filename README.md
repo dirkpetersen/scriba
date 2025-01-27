@@ -19,7 +19,7 @@ Once you execute Scriba, Windows will complain that the application is not signe
 
 ![image](https://github.com/user-attachments/assets/dbb764e1-a278-49a0-bf7a-ead4952808fe)
 
-Scriba requires AWS credentials that have at least AmazonTranscribeFullAccess (and in the future AmazonBedrockFullAccess). It will use the default AWS profile credentials (it needs at least AmazonTranscribeFullAccess that you might have stored in environment variables or in %USERPROFILE%\\.aws, but if it does not find any AWS credentials, it will prompt you:
+Scriba requires AWS credentials that have at least AmazonTranscribeFullAccess (and in the future AmazonBedrockFullAccess). It will use the default AWS profile credentials that you might have stored in environment variables or in %USERPROFILE%\\.aws, but if it does not find any AWS credentials, it will prompt you:
 
 ![image](https://github.com/user-attachments/assets/c7efab4a-4cd9-48b2-80c3-43fe37cc4e4a)
 
