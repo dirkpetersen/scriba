@@ -234,7 +234,13 @@ class Scriba:
                 logging.debug(f"Partial: {text}")
             else:
                 # Handle capitalization and periods based on "stop" command
-                sendtext  = text.rstrip('.')                
+                sendtext  = text.rstrip('.')
+                if sendtext.lower().endswith('period'):
+                    sendtext = sendtext[:-6]
+                    if sendtext.lower().endswith(', '):
+                        sendtext = sendtext[:-2]                        
+                    sendtext = sendtext.strip()+'.' 
+                    self.full_stop = True
                 if sendtext.lower() == "period":
                     sendtext = "."  # Just send a period for "stop" command
                     self.full_stop = True
@@ -251,8 +257,6 @@ class Scriba:
                 # Insert a space after punctuation if not already present
                 #sendtext = re.sub(r'([.?!])(?![\s"])', r'\1 ', sendtext)
                 sendtext = self.convert_umlauts(sendtext)
-                # Add a single white space at the end of a string if it doesn't already exist,
-                #sendtext = re.sub(r'([^ ])$', r'\1 ', sendtext)
                 self.send_keystrokes_win32(sendtext)
                 logging.info(f"Transcript: {sendtext}")
                         
