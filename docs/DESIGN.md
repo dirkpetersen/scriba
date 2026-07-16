@@ -48,6 +48,8 @@ accuracy reasons respectively.
 - No meeting transcription / diarization / long-form file transcription.
 - No text-to-speech in v1 — "readout mode" (agent output read aloud, British
   female voice, "more details" keyword) is a designed roadmap item, see §14.1.
+- No LLM text transformation in v1 — "rewrite mode" (fix grammar/style of
+  selected text in any app, in place) is a designed roadmap item, see §14.2.
 - No streaming partial results ("words appear while you speak"). Whisper is not
   natively streaming; v1 transcribes per utterance. An "eager flush" refinement
   is sketched in §14.
@@ -841,4 +843,60 @@ hear the speaker — Scriba must suspend VAD/wake-word during playback (plus a
 half-duplex with the mic re-armed between sentence chunks (so "stop" works in
 the gaps); true barge-in (listening while speaking, via echo cancellation) is
 a further refinement, not a prerequisite.
+
+### 14.2 Rewrite mode — fix selected text in place (LLM)
+
+Roadmap item. The user selects text in *any* application (a prompt line in a
+terminal, a paragraph in a browser or editor), presses a hotkey, and Scriba
+replaces the selection with a corrected version — grammar/spelling/style fix,
+or a full "rewrite in proper English" for non-native phrasing.
+
+**Mechanics (reuses M1 infrastructure almost entirely):**
+
+1. **Capture the selection.** Save the current clipboard → send the app's
+   copy chord → wait for a clipboard change (timeout ~500 ms) → read the text.
+   The copy chord is configurable **per app** (default `Ctrl+C`; terminals
+   need `Ctrl+Shift+C` since bare Ctrl+C may be SIGINT — reuse the §7.7
+   per-app override table). A cleaner capture path exists for apps that
+   support UI Automation's TextPattern (read the selection without touching
+   the clipboard); use it opportunistically, fall back to the clipboard trick.
+2. **Transform** via a pluggable provider (below), with a named *action*
+   selecting the instruction. Ships with two actions on two hotkeys:
+   `fix` ("correct grammar, spelling, punctuation; preserve meaning, line
+   breaks, and formatting; output only the corrected text") and `rewrite`
+   ("rewrite in clear, natural English; preserve meaning and formatting").
+   The action table lives in config; users add their own prompts/hotkeys.
+   Later synergy with dictation: hold the rewrite hotkey and *speak* the
+   instruction ("make this more formal") — the STT pipeline already exists.
+3. **Replace in place.** Set the clipboard to the result → send the paste
+   chord (per-app configurable, `Ctrl+Shift+V` for terminals) → restore the
+   original clipboard. In editable controls the still-active selection is
+   replaced by the paste. **Terminal caveat, stated honestly:** scrollback is
+   read-only — replacement only makes sense for text selected on the *input
+   line*; pasting inserts at the cursor, so the user must have the original
+   selected/deleted there. Document it; don't try to outsmart terminals.
+4. **Safety valves:** keep the original text in memory with a tray action
+   "Revert last rewrite" (re-paste the original); optional
+   `review_before_paste` config that pops a small before/after diff with
+   Accept/Cancel instead of replacing instantly.
+
+**Provider interface** — this is where the user's cloud credentials come in:
+
+```python
+class RewriteProvider(Protocol):
+    def rewrite(self, text: str, instruction: str) -> str: ...
+```
+
+Implementations, all thin: **Anthropic API** (a Haiku-class model is ideal —
+fast, cheap, excellent at grammar), **AWS Bedrock** (uses the user's existing
+AWS credentials), **Azure AI Foundry** (endpoint + key), and **local**
+(Ollama/llama.cpp — a 3B int4 model fits beside Whisper in the 2 GB of spare
+VRAM, with quality trade-offs). Provider + model + credentials live in a
+`[rewrite]` config section and settings tab; timeouts and failures toast and
+leave the original text untouched.
+
+**Privacy note (mandatory):** unlike everything else in Scriba, rewrite mode
+with a cloud provider sends the selected text off-machine. It is therefore
+off until a provider is explicitly configured, the settings tab says which
+provider receives the text, and rewrites are logged (locally) at INFO.
 ```

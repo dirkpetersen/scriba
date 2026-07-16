@@ -110,10 +110,13 @@ In rough order of user value:
 1. **Readout mode (TTS)** — DESIGN §14.1: Kokoro British female voice, MCP
    `speak` tool for Claude Code, intent keywords ("more details", "stop"),
    half-duplex mic suppression.
-2. **Personal accent LoRA fine-tune** from the adaptation dataset (§14).
-3. **AWS Transcribe backend** with custom vocabulary + hard cost guards (§14).
-4. **Client/server split**; Linux/macOS edge clients (§14).
-5. **Eager flush** for long dictation (§14).
+2. **Rewrite mode** — DESIGN §14.2: fix/rewrite selected text in place via a
+   pluggable LLM provider (Anthropic / Bedrock / Azure AI Foundry / local).
+3. **Personal accent LoRA fine-tune** from the adaptation dataset (§14),
+   trained on the Run:ai DGX H200 cluster.
+4. **AWS Transcribe backend** with custom vocabulary + hard cost guards (§14).
+5. **Client/server split**; Linux/macOS edge clients (§14).
+6. **Eager flush** for long dictation (§14).
 
 ---
 
