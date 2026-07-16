@@ -71,7 +71,10 @@ on first `uv sync`; no manual Python install.
 - **Do not run the terminal (or Scriba) elevated** during normal development —
   UIPI behavior differs for elevated processes and injection tests would lie
   to you (DESIGN §7.7).
-- **Microsoft Store Python** — if a stray `python` command opens the Store,
-  ignore it; the project only uses uv-managed Python (`uv run ...`). The
-  Store alias can be disabled under Settings → Apps → Advanced app settings →
-  App execution aliases.
+- **Microsoft Store Python** — the machine has Python 3.13 installed from the
+  Store. **Do not use it.** The project pins uv-managed Python 3.12
+  (deliberately: the ML wheel ecosystem — CTranslate2, onnxruntime, PySide6 —
+  trails the newest CPython, and 3.12 guarantees prebuilt wheels for every
+  dependency). uv fetches its own 3.12 on first `uv sync`; always run things
+  via `uv run ...`, never bare `python`. Leaving the Store install in place is
+  harmless.
