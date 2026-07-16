@@ -19,7 +19,10 @@ ideas (spoken commands, casing) and tray UX carry forward; its code does not.
 One Windows-native Python process: microphone(s) → Silero VAD + mic arbiter →
 faster-whisper on the local GPU → text post-processing (vocabulary correction,
 spoken commands, casing) → Unicode `SendInput` into the focused window.
-PySide6 tray + settings UI. Modes: push-to-talk, toggle, wake word (car mode).
+Streaming partials with self-correction (Windows-dictation parity) are a v1
+requirement — words appear while speaking and are revised via backspace-diff
+(DESIGN §7.4a). PySide6 tray + settings UI. Modes: push-to-talk, toggle,
+wake word (car mode).
 
 ## Locked decisions — do not re-litigate without asking the user
 

@@ -40,6 +40,9 @@ The core value: hold a key, speak, text appears in the focused window.
 - [ ] Minimal postproc: hallucination filter + casing/spacing state only
 - [ ] Injector: SendInput `KEYEVENTF_UNICODE` incl. surrogate pairs and Enter;
       foreground-window query; clipboard consolation on failure (§7.7)
+- [ ] Streaming partials (§7.4a): re-decode loop with LocalAgreement-2,
+      eager/stable policies, injector revision protocol (backspace + retype),
+      abandon-on-focus-change, auto-off on CPU fallback
 - [ ] Model fallback ladder (§9) — at minimum rungs 1, 3, 4 with DEGRADED state
 - [ ] Toggle mode (VAD-armed continuous dictation)
 - [ ] `--diagnose` flag (§7.10 → devices, CUDA, model cache, timing benchmark)
@@ -47,7 +50,9 @@ The core value: hold a key, speak, text appears in the focused window.
 **Accept (manual, on target machine):** first run downloads the model with
 visible tray progress; dictating a 2–3 sentence paragraph into Notepad,
 Windows Terminal, and Claude Code lands correctly (incl. an umlaut word typed
-natively); end-of-speech → text < 1.5 s measured by `--diagnose` figures; 10
+natively); **words start appearing ≤ ~1.5 s after speech starts and visibly
+self-correct as context clarifies — subjectively at least as good as Win+H**;
+final text after end-of-speech < 1.5 s measured by `--diagnose` figures; 10
 minutes of toggle-mode use shows no memory growth, no stray text while silent;
 unplugging/replugging a USB mic recovers with a toast.
 
@@ -116,7 +121,6 @@ In rough order of user value:
    trained on the Run:ai DGX H200 cluster.
 4. **AWS Transcribe backend** with custom vocabulary + hard cost guards (§14).
 5. **Client/server split**; Linux/macOS edge clients (§14).
-6. **Eager flush** for long dictation (§14).
 
 ---
 

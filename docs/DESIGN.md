@@ -25,6 +25,10 @@ accuracy reasons respectively.
   failure mode that killed v1).
 - **Low latency.** Text should appear well under ~1.5 s after the user stops
   speaking.
+- **Streaming partials, Windows-parity.** Like Win+H dictation, words must
+  begin appearing *while the user is still speaking*, and already-typed words
+  must self-correct when later context disambiguates them. This is a v1
+  requirement — the bar is "at least as good as Windows dictation" (§7.4a).
 - **Hands-free operation ("car mode").** The user dictates while driving with
   the laptop on the passenger seat: activation must work without touching the
   keyboard — wake word, plus optional hardware-button support.
@@ -50,9 +54,6 @@ accuracy reasons respectively.
   female voice, "more details" keyword) is a designed roadmap item, see §14.1.
 - No LLM text transformation in v1 — "rewrite mode" (fix grammar/style of
   selected text in any app, in place) is a designed roadmap item, see §14.2.
-- No streaming partial results ("words appear while you speak"). Whisper is not
-  natively streaming; v1 transcribes per utterance. An "eager flush" refinement
-  is sketched in §14.
 
 ---
 
@@ -186,10 +187,12 @@ class Transcript:
     no_speech_prob: float
     duration_s: float
     language: str
+    is_partial: bool = False   # streaming partial vs. final (§7.4a)
 
 @dataclass
 class InjectJob:
-    text: str               # final text; may contain '\n' (injected as Enter)
+    text: str               # text to type; may contain '\n' (injected as Enter)
+    erase: int = 0          # backspaces to send first (streaming revision, §7.4a)
 ```
 
 ### State machine
@@ -236,6 +239,10 @@ For a typical 5-second utterance, target end-of-speech → text-on-screen:
 
 If measured latency blows this budget, the knobs are (in order): endpoint
 silence, beam size, model size, paste mode.
+
+Streaming targets (§7.4a): first words on screen ≤ ~1.5 s after speech starts;
+partial refresh cadence ≈ `streaming.interval_ms` (800 ms). The table above
+then describes only the *final* reconciliation pass at utterance end.
 
 ---
 
@@ -342,11 +349,72 @@ class SttBackend(Protocol):
 - Downloads must be resumable/retryable (huggingface_hub does this) and a
   failed download must land in ERROR with a "Retry" menu action, not a crash.
 
+### 7.4a Streaming partials (`scriba/stt/streaming.py`)
+
+Windows-parity dictation: words appear while the user speaks and self-correct
+as context clarifies. Whisper is not natively streaming, so this is built from
+two cooperating mechanisms — **periodic re-decoding** in the STT worker and a
+**revision protocol** in the injector. (This is the established approach; cf.
+the whisper_streaming / LocalAgreement literature.)
+
+**Re-decode loop (STT worker).** While an utterance is open (VAD has started
+it but not endpointed), re-transcribe the accumulated utterance audio every
+`streaming.interval_ms` (default 800). Each pass yields a candidate text for
+the whole utterance so far.
+
+**Stability policy — LocalAgreement-2.** Tokens become *committed* once two
+consecutive decode passes agree on them (longest common token prefix of the
+last two passes). Two policies, config `streaming.policy`:
+
+- `eager` (default — this is the Windows-like behavior the user wants): type
+  everything from the latest pass immediately, committed or not; later passes
+  revise what changed.
+- `stable`: type only committed tokens; the unstable tail is withheld. Fewer
+  visible corrections, text trails the voice slightly.
+
+**Revision protocol (injector).** The injector keeps the exact string it has
+typed for the current utterance. Each partial update computes the longest
+common prefix between the typed string and the new candidate; it then sends
+`VK_BACK` × (typed − prefix) followed by the new suffix (`InjectJob.erase` +
+`text`). The **final** transcript — after the full post-processing pipeline
+(commands, vocabulary, casing, §7.5) — reconciles the same way, then the
+utterance buffer resets. Expect one visible "snap" at utterance end when
+post-processing lands, same as Windows dictation.
+
+**Window management.** Re-decode cost grows with utterance length. Cap the
+decoded audio at `streaming.window_s` (default 15 s): audio older than the
+window whose text is already committed is dropped from the decode input and
+its committed text is fed as decoder prefix/`initial_prompt` context instead,
+so long dictation stays real-time without losing context.
+
+**Constraints and honest limitations:**
+
+- Streaming requires `inject.method = "type"`. Paste mode can't revise —
+  apps with a per-app paste override get whole-utterance behavior instead.
+- If the foreground window changes mid-utterance, the injector must **never**
+  backspace into the new window: revision is abandoned, the utterance is
+  finalized, and the buffer resets.
+- Manual typing during an active utterance corrupts the revision diff — known
+  limitation, identical to Win+H; document it for the user.
+- GPU duty cycle rises during speech (continuous re-decode on the 3050,
+  idle between utterances) — acceptable for dictation bursts.
+  `streaming.enabled = false` restores plain utterance-at-once mode, and the
+  DEGRADED CPU fallback rungs (§9) force it off automatically (CPU decode
+  isn't fast enough to re-decode on a cadence).
+- Partial passes get whitespace normalization only; spoken commands, filler
+  removal, vocabulary correction, and casing run **only on the final pass**
+  (they are not stable mid-stream).
+
 ### 7.5 Text post-processing (`scriba/text/`)
 
 **Pure functions only** — `(Transcript, PostprocState, config) → (list[InjectJob], PostprocState)`.
 No I/O, no globals: this is the most unit-testable and most behavior-defining
 part of the app.
+
+The full pipeline runs on **final** transcripts only; streaming partials
+(§7.4a) bypass it except for whitespace normalization, and the injector's
+revision protocol reconciles the post-processed final against the typed
+partials.
 
 Pipeline order:
 
@@ -516,6 +584,12 @@ initial_prompt = ""            # optional decoder priming, see §7.10(a)
 [adaptation]
 enabled = false                # "flag last utterance" accent flywheel, §7.10(d)
 
+[streaming]
+enabled = true                 # Windows-parity partials, §7.4a
+policy = "eager"               # eager | stable
+interval_ms = 800
+window_s = 15
+
 [postproc]
 filler_removal = true
 umlaut_fold = false
@@ -635,6 +709,7 @@ scriba/                     # the package (proper __init__.py, relative imports)
   stt/
     base.py                 # SttBackend protocol, Transcript
     whisper_local.py        # faster-whisper backend + provisioning
+    streaming.py            # re-decode loop + LocalAgreement-2 (§7.4a)
     language.py             # language policy: fixed/auto/mixed resolution (§7.10)
     # aws_transcribe.py     # future (M5)
   text/
@@ -769,13 +844,11 @@ per-transcription — an OOM mid-run drops a rung and retries the utterance once
 - **Client/server split:** the `detector → stt` queue boundary becomes a
   WebSocket (16 kHz PCM frames up, transcripts down); a thin edge client owns
   capture+injection, the engine runs in WSL, on a LAN box, or centrally with
-  one shared AWS key. The dataclasses in §5 are the wire schema, verbatim.
+  one shared AWS key. The dataclasses in §5 are the wire schema, verbatim
+  (including partial transcripts and revision jobs).
 - **Linux/macOS clients:** `inject/` grows `linux.py` (wtype/ydotool/uinput)
   and `macos.py` (CGEventPost + Accessibility permission); capture and UI are
   already cross-platform (PortAudio/Qt).
-- **Eager flush:** for long dictation, flush completed clauses at strong pause
-  boundaries before the utterance ends, trading a little accuracy (no right
-  context) for perceived latency.
 - **Custom "hey Scriba" wake-word model** via openWakeWord's synthetic
   training pipeline.
 - **Personal accent fine-tune:** once the adaptation flywheel (§7.10d) has
