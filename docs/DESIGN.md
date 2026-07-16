@@ -1,0 +1,844 @@
+# Scriba v2 — Architecture & Design
+
+Status: **approved design, pre-implementation**. This document is the authoritative
+specification for the rewrite. The legacy AWS-based implementation lives on the
+`legacy` branch and is referenced here only for lessons learned.
+
+---
+
+## 1. Purpose
+
+Scriba is a voice-dictation utility: the user speaks, and the transcribed text is
+typed into whatever window currently has keyboard focus (editors, terminals,
+Claude Code, browsers). It replaces both the legacy AWS-based Scriba and the
+built-in Windows dictation (Win+H), which the user abandoned for cost and
+accuracy reasons respectively.
+
+### Goals
+
+- **Accuracy on technical vocabulary.** The user dictates IT terms (kubectl,
+  systemd, Terraform, WSL2, ...) that generic dictation consistently misspells.
+  Scriba must support a user-maintained vocabulary that biases recognition and
+  corrects output.
+- **Zero marginal cost.** Speech-to-text runs locally on the user's GPU. No
+  cloud service, no metering, no "session left open" billing surprises (the
+  failure mode that killed v1).
+- **Low latency.** Text should appear well under ~1.5 s after the user stops
+  speaking.
+- **Hands-free operation ("car mode").** The user dictates while driving with
+  the laptop on the passenger seat: activation must work without touching the
+  keyboard — wake word, plus optional hardware-button support.
+- **Bilingual & accent-robust.** English (en) and German (de) dictation with a
+  quick way to switch — and good handling of the user's actual speech:
+  American English spoken with a German accent, plus mixed-language sentences
+  ("Denglish"). See §7.10 for the language/accent strategy.
+- **User-friendly.** Real settings UI, tray icon with meaningful states,
+  first-run experience that downloads the model with visible progress. No
+  editing config files as the primary interface (though the config file exists
+  and is documented).
+
+### Non-goals (v1 of the rewrite)
+
+- No cloud STT backend (AWS Transcribe is a *future optional* backend — the
+  interface accommodates it, see §14).
+- No client/server split across machines (the internal seams allow it later,
+  see §14).
+- No Linux/macOS support yet (module boundaries keep platform code isolated,
+  see §14).
+- No meeting transcription / diarization / long-form file transcription.
+- No text-to-speech in v1 — "readout mode" (agent output read aloud, British
+  female voice, "more details" keyword) is a designed roadmap item, see §14.1.
+- No streaming partial results ("words appear while you speak"). Whisper is not
+  natively streaming; v1 transcribes per utterance. An "eager flush" refinement
+  is sketched in §14.
+
+---
+
+## 2. Lessons from v1 (legacy branch)
+
+| v1 problem | v2 answer |
+|---|---|
+| AWS streaming cost, opaque "billable minute" logic keeping sessions warm | Local inference; no meter exists |
+| Misrecognized technical terms | Hotword biasing + vocabulary correction pass (§7.6) |
+| `VkKeyScan`-based injection was keyboard-layout dependent; forced umlaut folding | `SendInput` with `KEYEVENTF_UNICODE` (§7.7); umlaut folding becomes an optional toggle, default off |
+| Complex asyncio task/reconnect machinery for the websocket | Plain threads + queues; no network in the hot path (§5) |
+| Bare sibling imports (`from presigned_url import ...`) broke package imports and the test suite | Proper package with relative imports from day one |
+| PySimpleGUI credentials popup, pystray-only UI | PySide6 (Qt) tray + settings window (§7.8) |
+| Windows-only assumptions baked in everywhere | Platform-specific code isolated to `inject/` and `ui/` seams |
+
+Worth carrying forward from v1: the spoken-command idea ("period"/"comma", EN+DE),
+filler-word stripping, sentence-casing state, tray color language, and the
+named-mutex single-instance guard.
+
+---
+
+## 3. Decisions (locked)
+
+These were discussed and settled with the user. Do not re-litigate without asking.
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Platform for v1 | **Native Windows, single process** | Mic capture and keystroke injection must be on Windows anyway; WSL adds GPU paravirtualization overhead and an "is WSL running" failure mode. WSL remains a dev environment only. |
+| Language | **Python 3.12** | Latency lives in the STT model (C++ under faster-whisper), not the runtime. Python has mature libs for every component. Clean seams allow later rewrites of individual pieces. |
+| STT engine | **faster-whisper** (CTranslate2) | Best default per ecosystem consensus; int8 quantization fits the 4 GB card; `hotwords` support. |
+| Model | **`large-v3-turbo`, `int8_float16`, CUDA** (default) | Multilingual (required for German — note: **Distil-Whisper models are English-only**, so `distil-large-v3` is offered only as an opt-in for English-only use). ~1.5–2 GB VRAM. Fallback ladder in §9. |
+| VAD | **Silero VAD** (ONNX, CPU) | Tiny (~2 MB), accurate, 512-sample/32 ms frames align with capture blocks. Also prevents Whisper silence-hallucinations by construction. |
+| Wake word | **openWakeWord** (ONNX, CPU) | Free, offline, runs continuously at negligible CPU. Pre-trained phrase first; custom "Scriba" phrase later (§7.3). |
+| UI toolkit | **PySide6 (Qt)** | One framework covers tray icon, native menus, toasts, a real settings dialog, and a first-run/download progress UI. Cross-platform for free later. |
+| Concurrency | **Threads + queues, no asyncio** | The pipeline is a simple linear dataflow with blocking C libraries (PortAudio, CTranslate2); threads are the natural fit and remove v1's most bug-prone area. |
+| GPU/CUDA deps | **pip wheels** (`nvidia-cudnn-cu12`, `nvidia-cublas-cu12`) | Avoids the #1 faster-whisper install complaint (system cuDNN mismatches). Everything lives in the venv. |
+| Cloud | **None in v1** | AWS Transcribe (+custom vocabulary +cost guards) is a future pluggable backend behind the `SttBackend` interface. |
+
+### Target machine (the user's)
+
+- Windows 11, WSL2 present but **not** part of the runtime.
+- NVIDIA RTX 3050 Laptop GPU, **4 GB VRAM, 25 W power limit**, driver CUDA 12.2.
+- GPU is otherwise idle — Scriba may assume ~2 GB VRAM is available.
+- Multiple microphones may be present (laptop array, USB, Bluetooth headset)
+  and **all enabled mics must be monitored** — see §7.2.
+
+---
+
+## 4. System overview
+
+One Windows process, five pipeline stages connected by queues, plus the Qt main
+thread for UI:
+
+```
+                    ┌────────────────────────────────────────────────────────┐
+                    │                     Qt main thread                     │
+                    │   tray icon · menus · toasts · settings window ·       │
+                    │   first-run wizard · download progress                 │
+                    └──────────────▲─────────────────────────▲───────────────┘
+                                   │ state signals            │ config changes
+┌──────────────┐   AudioFrame   ┌──┴───────────────┐  Utterance  ┌──────────────┐
+│ capture       │──per device──▶│ detector          │────────────▶│ stt worker   │
+│ one PortAudio │               │ mic arbiter       │   (audio,   │ faster-      │
+│ InputStream   │               │ wake word (armed) │   metadata) │ whisper on   │
+│ per enabled   │               │ Silero VAD        │             │ GPU (owns    │
+│ mic           │               │ utterance         │             │ the model)   │
+└──────────────┘               │ segmentation      │             └──────┬───────┘
+                                └──────────────────┘                    │ Transcript
+                                                                        ▼
+                                                        ┌──────────────────────────┐
+                                                        │ postproc (pure functions) │
+                                                        │ hallucination filter ·    │
+                                                        │ spoken commands ·         │
+                                                        │ filler removal ·          │
+                                                        │ vocabulary correction ·   │
+                                                        │ casing/spacing state      │
+                                                        └────────────┬─────────────┘
+                                                                     │ InjectJob
+                                                                     ▼
+                                                        ┌──────────────────────────┐
+                                                        │ injector                  │
+                                                        │ SendInput (Unicode) or    │
+                                                        │ clipboard-paste mode      │
+                                                        └──────────────────────────┘
+```
+
+Everything above the injector is platform-neutral by construction; only
+`inject/` and small parts of `ui/` and `app` bootstrap are Windows-specific.
+
+---
+
+## 5. Runtime model
+
+### Threads
+
+| Thread | Owns | Blocking on |
+|---|---|---|
+| Qt main thread | Tray, settings window, toasts, timers | Qt event loop |
+| PortAudio callback threads (one per open input stream) | Nothing — copy frames into the arbiter's per-device ring buffers and return immediately | (real-time, never block) |
+| `detector` thread | Mic arbiter, wake-word model, VAD model, segmentation state | `frame_queue.get()` |
+| `stt` thread | The Whisper model (single owner — serializes GPU access) | `utterance_queue.get()` |
+| `inject` thread | SendInput pacing, clipboard mode | `inject_queue.get()` |
+| `provision` thread (transient) | Model download on first run / model change | network I/O |
+
+Workers communicate with the UI via Qt signals (thread-safe queued connections).
+Every worker thread runs a top-level `try/except` that logs, emits an error
+state to the tray, and restarts its loop — a crash in one stage must never take
+the app down silently (§9).
+
+### Messages (dataclasses)
+
+```python
+@dataclass
+class AudioFrame:
+    device_id: str          # stable device identifier
+    pcm: np.ndarray         # int16 mono, 512 samples @ 16 kHz (32 ms)
+    t_monotonic: float
+
+@dataclass
+class Utterance:
+    pcm: np.ndarray         # int16 mono 16 kHz, pre-roll included
+    device_id: str
+    t_start: float
+    t_end: float
+    language: str | None    # config override, or None for auto
+
+@dataclass
+class Transcript:
+    text: str
+    avg_logprob: float
+    no_speech_prob: float
+    duration_s: float
+    language: str
+
+@dataclass
+class InjectJob:
+    text: str               # final text; may contain '\n' (injected as Enter)
+```
+
+### State machine
+
+Modes (user-selected): `push_to_talk` · `toggle` · `wake_word`.
+
+States (tray-visible):
+
+```
+DISABLED ──enable──▶ ARMED ──speech/wake/hotkey──▶ LISTENING ──endpoint──▶ TRANSCRIBING ─┐
+   ▲                   ▲                                                                 │
+   └──disable──────────┴────────────────────────────(text injected)◀────────────────────┘
+
+PROVISIONING (first run / model change: download+load with progress)
+DEGRADED     (running, but on a fallback model/CPU — see §9)
+ERROR        (no mic, model load failed after all fallbacks, ...)
+```
+
+- `toggle` mode: hotkey or tray click flips DISABLED ⇄ ARMED. While ARMED, VAD
+  alone starts utterances (this is the "always on at my desk" mode).
+- `push_to_talk` mode: LISTENING only while the hotkey is held; endpoint on
+  release.
+- `wake_word` mode ("car mode"): ARMED runs the wake-word model; on detection,
+  play a short confirmation sound (important in the car — eyes stay on the
+  road) and go LISTENING until a configurable sleep phrase ("stop listening")
+  or N seconds of silence.
+
+Tray colors: gray=DISABLED, yellow=ARMED, green=LISTENING, blue=TRANSCRIBING
+(usually a blink), orange=DEGRADED, red=ERROR, animated badge=PROVISIONING.
+
+---
+
+## 6. Latency budget
+
+For a typical 5-second utterance, target end-of-speech → text-on-screen:
+
+| Stage | Budget | Notes |
+|---|---|---|
+| Endpoint silence wait | 600 ms | Dominant term; configurable (`vad.endpoint_silence_ms`). PTT mode: 0 (key release is the endpoint). |
+| STT (turbo int8, RTX 3050 25 W) | 300–600 ms | beam_size=1, no word timestamps |
+| Post-processing | < 5 ms | Pure Python string work |
+| Injection (100 chars, type mode) | ~200 ms | 2 ms/char pacing; paste mode ~10 ms |
+| **Total** | **≈ 0.9–1.4 s** | |
+
+If measured latency blows this budget, the knobs are (in order): endpoint
+silence, beam size, model size, paste mode.
+
+---
+
+## 7. Component specifications
+
+### 7.1 Audio capture (`scriba/audio/`)
+
+- Library: **sounddevice** (PortAudio; WASAPI on Windows).
+- One `InputStream` per *enabled* device: 16 kHz, mono, `int16`,
+  `blocksize=512` (32 ms — exactly one Silero VAD frame). If a device can't do
+  16 kHz natively, open at its native rate and resample in the callback
+  (`soxr`/`scipy.signal.resample_poly`; keep it cheap).
+- Callbacks only copy into a per-device ring buffer and push an `AudioFrame`
+  to the detector queue. Never do model work in a PortAudio callback.
+- **Device management:** enumerate input devices; the settings UI shows them
+  with checkboxes (default: all enabled) and live level meters. Handle device
+  hot-plug/unplug: listen for WM_DEVICECHANGE (or poll enumeration every few
+  seconds — simpler and acceptable), re-open streams, toast on change. A
+  Bluetooth mic appearing in the car must start being monitored without a
+  restart.
+- Each device gets a **pre-roll ring buffer** of `vad.pre_roll_ms` (default
+  400 ms) so the first syllable isn't clipped when VAD triggers.
+
+### 7.2 Mic arbiter + VAD + segmentation (`scriba/detect/`)
+
+**Why an arbiter:** multiple live mics will all hear the same speech. Exactly
+one stream may feed an utterance, or the user gets double text.
+
+- Run Silero VAD **independently per enabled device** (it's tiny; even 4
+  devices are negligible CPU).
+- When one or more devices cross the speech threshold within an arbitration
+  window (~200 ms), pick the winner by highest mean VAD probability (tie-break:
+  highest RMS). The winner is **sticky for the whole utterance** — no
+  mid-utterance switching.
+- All other devices are ignored (not closed) until the utterance ends.
+- Optional per-device priority in config (e.g. always prefer the headset when
+  present).
+
+**Segmentation state machine** (runs on the winning device's frames):
+
+- Speech start: VAD probability ≥ `vad.threshold` (default 0.5) for ≥ 2
+  consecutive frames → emit utterance start; prepend pre-roll buffer.
+- Speech end: probability below threshold for `vad.endpoint_silence_ms`
+  (default 600) → close utterance, push `Utterance` to STT queue.
+- Guards: discard utterances shorter than `vad.min_speech_ms` (default 250);
+  force-flush at `vad.max_utterance_s` (default 30) at the last sub-threshold
+  frame, then continue a new utterance seamlessly.
+
+### 7.3 Wake word (`scriba/detect/wakeword.py`)
+
+- Library: **openWakeWord** (onnxruntime CPU). It consumes 80 ms/1280-sample
+  chunks at 16 kHz; the detector thread re-chunks frames for it.
+- Runs **only** in `wake_word` mode while ARMED, on all enabled devices (the
+  arbiter applies to the wake event too — the triggering device wins the
+  subsequent utterance... or re-arbitrate at first speech; implementer's
+  choice, document it).
+- v1 ships with a pre-trained phrase (e.g. "hey jarvis") to validate the
+  pipeline; a custom **"hey Scriba"** model trained with openWakeWord's
+  synthetic-data pipeline is a follow-up task (M3 stretch).
+- False-positive controls: detection threshold (default 0.6), require VAD
+  agreement within ±300 ms, 2 s refractory period after any detection,
+  confirmation beep on activation, sleep phrase and/or
+  `wake_word.auto_sleep_s` (default 15 s of no speech) to return to ARMED.
+
+### 7.4 STT engine (`scriba/stt/`)
+
+**Interface** (the seam for future backends):
+
+```python
+class SttBackend(Protocol):
+    def load(self, progress_cb: Callable[[float, str], None]) -> None: ...
+    def transcribe(self, utt: Utterance, hotwords: str | None) -> Transcript: ...
+    def unload(self) -> None: ...
+    @property
+    def descriptor(self) -> str: ...   # e.g. "large-v3-turbo/int8_float16/cuda"
+```
+
+**Local backend (`whisper_local.py`)** — the only v1 implementation:
+
+- `faster_whisper.WhisperModel(model_name, device=..., compute_type=...)`.
+- Defaults: `model="large-v3-turbo"`, `device="auto"`,
+  `compute_type="int8_float16"` on CUDA / `"int8"` on CPU.
+- Transcribe parameters:
+  - `language`: resolved per utterance by the **language policy** (§7.10) —
+    a fixed code, or per-utterance detection in `auto`/`mixed` modes.
+  - `beam_size=1`, `temperature=0.0`, `condition_on_previous_text=False`
+    (prevents cross-utterance hallucination loops),
+    `vad_filter=False` (we already segmented), `without_timestamps=True`.
+  - `hotwords`: rendered from the vocabulary (§7.6).
+- The model is loaded once and owned by the STT thread. Model changes from the
+  settings UI go through `unload()` → PROVISIONING → `load()`.
+- First inference is slow (CUDA context + kernel warmup): run a ~1 s silent
+  warmup transcription at load time so the first real dictation isn't laggy.
+
+**Model provisioning / first run:**
+
+- Models download **at runtime** from Hugging Face (faster-whisper handles
+  this) into `%LOCALAPPDATA%\Scriba\models`. `large-v3-turbo` int8 is roughly
+  a 1.5 GB download.
+- The download runs in the `provision` thread; `progress_cb(fraction, label)`
+  drives the tray (PROVISIONING state, percentage in tooltip + a determinate
+  progress bar in the first-run window + toast on completion). The app stays
+  responsive; dictation is unavailable until load completes.
+- Downloads must be resumable/retryable (huggingface_hub does this) and a
+  failed download must land in ERROR with a "Retry" menu action, not a crash.
+
+### 7.5 Text post-processing (`scriba/text/`)
+
+**Pure functions only** — `(Transcript, PostprocState, config) → (list[InjectJob], PostprocState)`.
+No I/O, no globals: this is the most unit-testable and most behavior-defining
+part of the app.
+
+Pipeline order:
+
+1. **Hallucination filter.** Drop the transcript entirely if: empty/whitespace;
+   `no_speech_prob > 0.6`; `avg_logprob < -1.0`; duration < `vad.min_speech_ms`;
+   or text ∈ blocklist. Blocklist ships with Whisper's classic silence
+   artifacts ("Thank you.", "Thanks for watching!", "you", subtitle credits)
+   per language, extensible in config.
+2. **Spoken commands.** Token-level command table, EN+DE, applied to trailing
+   and standalone commands (v1 legacy parity plus new entries):
+
+   | Spoken (EN) | Spoken (DE) | Output |
+   |---|---|---|
+   | period / full stop / and period | punkt / und punkt | `.` (sets sentence-end state) |
+   | comma / and comma | komma / und komma | `,` |
+   | question mark | fragezeichen | `?` (sentence-end) |
+   | exclamation mark | ausrufezeichen | `!` (sentence-end) |
+   | new line | neue zeile | `\n` |
+   | new paragraph | neuer absatz | `\n\n` |
+   | colon | doppelpunkt | `:` |
+
+   The table lives in config so the user can extend it. Matching is
+   case-insensitive on the final tokens after stripping Whisper's own trailing
+   punctuation (Whisper often already appends "." — dedupe).
+3. **Filler removal** (configurable, default on): strip `um, uh, hm, ah, er,
+   äh, ähm, ...` word-initial and mid-sentence, with the legacy regex as a
+   starting point but per-language lists.
+4. **Vocabulary correction** — see §7.6.
+5. **Casing & spacing state machine.** Carries `PostprocState` across
+   utterances: if the previous injected text ended a sentence (`.?!` or `\n`),
+   capitalize the next utterance's first letter and don't prepend a space
+   after `\n`; otherwise prepend one space and lowercase the first word
+   (unless it's a vocabulary term with fixed casing). **Reset the state when
+   the foreground window changes** between utterances (the injector reports
+   the hwnd it last typed into) — continuing mid-sentence into a different app
+   makes no sense.
+6. **Optional umlaut folding** (`postproc.umlaut_fold`, default **off** —
+   Unicode injection types ä/ö/ü/ß natively; the toggle exists for pure-ASCII
+   contexts).
+
+### 7.6 Vocabulary system (`scriba/text/vocabulary.py`)
+
+One user-maintained file drives **two** mechanisms:
+
+`%APPDATA%\Scriba\vocabulary.txt`, one entry per line:
+
+```
+# canonical | sounds-like alias, alias2, ...
+kubectl | cube control, cube cuttle, cube c t l
+systemd | system d
+WSL2 | w s l two, wsl two
+Terraform
+CLAUDE.md | claude m d
+```
+
+1. **Recognition biasing:** all canonical terms are joined into the
+   faster-whisper `hotwords` string (and, later, become the AWS custom
+   vocabulary). This raises the model's prior for those tokens.
+2. **Post-correction:** after transcription, scan the text for fuzzy matches
+   (rapidfuzz, token-level and bigram/trigram window for multi-word aliases)
+   against the canonical terms **and** their sounds-like aliases; replace at
+   similarity ≥ `postproc.correction_threshold` (default 87, tune with tests).
+   Canonical casing always wins (`WSL2` never becomes `wsl2`).
+
+The settings window includes a vocabulary editor (add/remove/edit lines) and
+the file is watched for external edits (reload on change). Corrections applied
+are logged at INFO ("corrected 'cube control' → 'kubectl'") so the user can
+debug surprises.
+
+### 7.7 Text injection (`scriba/inject/`)
+
+- **Primary method:** Win32 `SendInput` with `KEYEVENTF_UNICODE` — per
+  character, `wVk=0, wScan=<code unit>`, down+up; **surrogate pairs** sent as
+  two events each (emoji-safe); `\n` sent as `VK_RETURN` down/up. This is
+  keyboard-layout independent and types umlauts directly (fixes the v1
+  layout bug).
+- Pacing: `inject.per_char_delay_ms` (default 2). Terminals (Windows Terminal,
+  VS Code terminal) are the primary consumers and handle this fine.
+- **Paste mode** (config global default + per-app override by exe name): set
+  clipboard → send Ctrl+V → restore previous clipboard after a short delay.
+  Use for apps that mishandle synthetic Unicode input or for long texts.
+- Before injecting, read the foreground window (hwnd, title, exe name) — used
+  for per-app overrides, the postproc state reset (§7.5), and logging. If no
+  foreground window, drop the job with a warning toast.
+- **Known limitation to document for the user:** UIPI blocks injection into
+  elevated windows unless Scriba itself runs elevated. Detect the failure
+  (SendInput returns 0 / foreground exe is elevated) and toast a clear message
+  rather than failing silently.
+
+### 7.8 UI (`scriba/ui/`)
+
+PySide6 throughout; the Qt event loop is the main thread.
+
+- **Tray icon** (`QSystemTrayIcon`): state colors per §5; left-click = toggle
+  enable/disable; tooltip shows state + active model + language. Context menu:
+  - Enable/Disable
+  - Mode: Push-to-talk / Toggle / Wake word
+  - Language: English / Deutsch / Mixed (EN+DE) / Auto
+  - Flag last utterance… (visible when `[adaptation]` is enabled)
+  - Settings…
+  - Open log / Open vocabulary
+  - Quit
+- **Settings window** (opened on demand, closable without quitting):
+  - *Audio*: device list with enable checkboxes + live level meters, per-device priority
+  - *Model*: model choice (turbo / distil-large-v3 [EN-only, labeled as such] /
+    small), device (auto/cuda/cpu), current VRAM note, "re-download model"
+  - *Vocabulary*: editor for vocabulary.txt
+  - *Commands & text*: spoken-command table, filler removal toggle, umlaut fold
+  - *Hotkeys*: PTT key, toggle key, language-switch key (with capture widget)
+  - *Wake word*: phrase, threshold, sleep phrase, auto-sleep, sounds on/off
+- **First-run wizard**: pick language(s) → pick mics → model downloads with a
+  determinate progress bar (also mirrored in the tray, per the PROVISIONING
+  state) → "try it: focus Notepad and hold <hotkey>".
+- **Toasts** via `QSystemTrayIcon.showMessage` for: mode/language changes,
+  device hot-plug, degraded fallbacks, injection-blocked warnings.
+- **Hotkeys**: global hotkeys must work when Scriba is not focused, including
+  key-up detection for push-to-talk. Implementation options: `RegisterHotKey`
+  (no key-up events — fine for toggle) plus a low-level keyboard hook
+  (`WH_KEYBOARD_LL` via pywin32/ctypes, or the `keyboard` package as in v1)
+  for PTT hold semantics. Requirement, not implementation, is locked: *hold to
+  talk must work globally*.
+- **Sounds**: short activation/deactivation cues (Qt multimedia or winsound),
+  essential for car mode; toggleable.
+
+### 7.9 Configuration (`scriba/config.py`)
+
+- Location: `%APPDATA%\Scriba\config.toml` (created with defaults on first
+  run). Vocabulary sits next to it. Models and logs under
+  `%LOCALAPPDATA%\Scriba\`.
+- Read with `tomllib`; written by the settings UI (use `tomlkit` to preserve
+  comments, or accept regenerated files — implementer's choice).
+- Schema (defaults shown):
+
+```toml
+[general]
+mode = "toggle"                # push_to_talk | toggle | wake_word
+language = "en"                # en | de | auto | mixed  (see §7.10)
+
+[audio]
+enabled_devices = []           # empty = all input devices
+device_priority = []           # optional ordered exe of preferred device names
+
+[vad]
+threshold = 0.5
+endpoint_silence_ms = 600
+pre_roll_ms = 400
+min_speech_ms = 250
+max_utterance_s = 30
+
+[wake_word]
+model = "hey_jarvis"           # until custom "hey scriba" is trained
+threshold = 0.6
+sleep_phrase = "stop listening"
+auto_sleep_s = 15
+sounds = true
+
+[stt]
+backend = "local"              # local | aws (future)
+model = "large-v3-turbo"
+device = "auto"                # auto | cuda | cpu
+compute_type = "int8_float16"
+beam_size = 1
+languages = ["en", "de"]       # candidate set for language = "mixed"
+language_confidence_min = 0.6  # below this, fall back to languages[0]
+initial_prompt = ""            # optional decoder priming, see §7.10(a)
+
+[adaptation]
+enabled = false                # "flag last utterance" accent flywheel, §7.10(d)
+
+[postproc]
+filler_removal = true
+umlaut_fold = false
+correction_threshold = 87
+blocklist_extra = []
+
+[inject]
+method = "type"                # type | paste
+per_char_delay_ms = 2
+
+[inject.per_app]               # exe name -> method override
+# "someapp.exe" = "paste"
+
+[hotkeys]
+toggle = "ctrl+alt+d"
+push_to_talk = "ctrl+alt+space"
+language_switch = "ctrl+alt+l"
+```
+
+(Default hotkeys deliberately avoid Win+H, which remains bound to Windows
+dictation.)
+
+### 7.10 Language policy: accents & mixed-language speech (`scriba/stt/language.py`)
+
+The user's real speech is American English with a German accent, sometimes
+mixing German words into English sentences (and vice versa). Three distinct
+problems, three distinct mechanisms:
+
+**(a) Accented English.** This is mostly a model-quality question, and it's the
+reason the default model is `large-v3-turbo` rather than a small one: Whisper's
+large variants were trained on heavily accented English and handle it far
+better than Windows dictation (whose weakness with accents is what drove the
+user away). Where the accent still causes *systematic* mishearings of specific
+terms, that is exactly what the vocabulary's sounds-like aliases are for —
+"cube cuttle → kubectl" is an accent artifact, and the alias column should be
+written against how the user actually pronounces things. Additionally,
+`stt.initial_prompt` (config, default empty) lets the user prime the decoder
+with a sentence or two of representative text ("Transcript of a software
+engineering dictation about Kubernetes, WSL2, and Terraform."), which measurably
+nudges style and domain vocabulary. True per-voice adaptation (fine-tuning on
+the user's own corrections) is future work — but v1 lays its groundwork, see
+**(d)** below.
+
+**(b) Switching languages between utterances.** Because VAD hands the STT
+worker one utterance at a time, per-utterance language detection gives natural
+sentence-level code-switching. Language modes (config `general.language`,
+also in the tray menu):
+
+- `"en"` / `"de"` — fixed language, fastest and most accurate. Default `"en"`,
+  with the `language_switch` hotkey and tray toggle as in v1.
+- `"auto"` — Whisper's built-in detection over **all** languages. Unreliable
+  on short utterances; kept as an option, not recommended.
+- `"mixed"` — detection **restricted to `stt.languages`** (default
+  `["en", "de"]`): run faster-whisper's language-detection pass, but choose the
+  argmax only among the configured set. Restricting the choice to two known
+  candidates makes short-utterance detection dramatically more reliable than
+  open-set auto. If the winning probability is below
+  `stt.language_confidence_min` (default 0.6 — i.e. genuinely ambiguous,
+  usually *because* the utterance is mixed), fall back to the list's first
+  entry as the primary language. This is the recommended mode for Denglish
+  speakers.
+
+**(c) Mixing languages within one utterance** ("Wir müssen das deployment
+rebooten"). Honest engineering position: Whisper cannot code-switch word-level
+within a single decode — it transcribes in one language and will usually
+render embedded foreign words phonetically or translate them. Mitigations, in
+order of practical value:
+
+1. Whisper handles embedded **proper nouns and technical terms** (the dominant
+   Denglish case for this user: English tech terms inside German sentences)
+   surprisingly well even in `de` mode, because those terms are frequent in
+   its training data. Expect this to mostly just work.
+2. The **vocabulary system is language-agnostic**: canonical terms + aliases
+   are applied to the post-correction pass regardless of utterance language,
+   so a mangled embedded term gets repaired the same way an accent artifact
+   does. Aliases may be written in either language's phonetics.
+3. What we deliberately do **not** do in v1: dual-decode every utterance in
+   both languages and merge (doubles GPU latency for marginal gain), or
+   word-level language tagging (research-grade, not product-grade). Recorded
+   as considered-and-rejected.
+
+**(d) Groundwork for personal adaptation (the accent flywheel).** A global
+hotkey / tray action "**flag last utterance**" saves the utterance's audio
+(WAV) plus the emitted text into `%LOCALAPPDATA%\Scriba\adaptation\`, and
+opens a tiny dialog where the user types what they *actually* said. Opt-in,
+local-only, off by default (`[adaptation] enabled = false`). This costs almost
+nothing to build in v1 and quietly accumulates a (user-voice audio → corrected
+text) dataset. Future work (§14) turns that into a LoRA fine-tune of the
+Whisper model — the only real fix for an individual accent — and until then
+the flagged pairs are a goldmine for writing better sounds-like aliases.
+
+### 7.11 Logging & diagnostics
+
+- Rotating file log at `%LOCALAPPDATA%\Scriba\logs\scriba.log` (1 MB × 3),
+  console when run from a terminal. INFO default, DEBUG via config/env var.
+- Log per utterance: winning device, utterance duration, STT wall time, final
+  text (INFO), corrections applied, injection target exe.
+- A `--diagnose` CLI flag prints: detected devices, CUDA availability,
+  cuDNN/cublas resolution, model cache state, and runs a synthetic 3 s
+  transcription benchmark. This is the first thing to ask a user (or a Claude
+  session) to run when something is broken.
+
+---
+
+## 8. Repository layout
+
+```
+scriba/                     # the package (proper __init__.py, relative imports)
+  app.py                    # entry point: bootstrap, single-instance mutex, Qt loop
+  config.py
+  audio/
+    capture.py              # device enumeration, streams, ring buffers, hot-plug
+  detect/
+    arbiter.py              # multi-mic arbitration
+    vad.py                  # Silero wrapper + segmentation state machine
+    wakeword.py             # openWakeWord wrapper
+  stt/
+    base.py                 # SttBackend protocol, Transcript
+    whisper_local.py        # faster-whisper backend + provisioning
+    language.py             # language policy: fixed/auto/mixed resolution (§7.10)
+    # aws_transcribe.py     # future (M5)
+  text/
+    pipeline.py             # ordered pure pipeline
+    commands.py             # spoken-command table + matching
+    corrections.py          # vocabulary fuzzy correction
+    vocabulary.py           # vocabulary.txt parsing/watching
+    casing.py               # casing/spacing state machine
+  inject/
+    base.py
+    windows.py              # SendInput UNICODE, paste mode, foreground query
+  ui/
+    tray.py
+    settings.py
+    firstrun.py
+    hotkeys.py
+    sounds.py
+tests/
+  test_commands.py          # golden tests, EN+DE
+  test_corrections.py
+  test_casing.py
+  test_pipeline.py
+  test_vad_segmentation.py  # fixture WAVs through segmentation only
+  fixtures/*.wav
+docs/
+  DESIGN.md                 # this file
+  PLAN.md                   # milestones & acceptance criteria
+pyproject.toml              # uv-managed; console entry `scriba = scriba.app:main`
+```
+
+Dependencies (runtime): `faster-whisper`, `sounddevice`, `numpy`,
+`silero-vad` (or onnxruntime + bundled model), `openwakeword`, `PySide6`,
+`rapidfuzz`, `pywin32`, `keyboard` (or ctypes hook), `tomlkit`;
+GPU extra: `nvidia-cudnn-cu12`, `nvidia-cublas-cu12`.
+Dev: `pytest`, `ruff`.
+
+---
+
+## 9. Failure handling & degradation
+
+**Model fallback ladder** (attempted in order at load; current rung shown in
+tray tooltip; below rung 1 ⇒ DEGRADED/orange):
+
+1. configured model, `int8_float16`, CUDA
+2. same model, CPU `int8` — only if CUDA init fails; likely too slow for turbo, so:
+3. `small`, `int8_float16`, CUDA (~0.5 GB — the "GPU is busy" rung)
+4. `small`, `int8`, CPU (real-time capable on a modern laptop CPU)
+5. ERROR state with actionable message
+
+Trigger rungs on: CUDA unavailable, cuDNN load failure, CUDA OOM (also caught
+per-transcription — an OOM mid-run drops a rung and retries the utterance once).
+
+**Other failures:**
+
+- No input device at startup → ERROR + toast; recover automatically on hot-plug.
+- Device disappears mid-utterance → discard partial utterance, toast, re-arm.
+- Wake-word/VAD model file corrupt → re-download via provisioning path.
+- Worker thread exception → log with traceback, tray ERROR blink, restart the
+  worker loop; after 3 crashes in 60 s, stay in ERROR (no crash-loop spin).
+- Injection failure (UIPI / no foreground) → toast with the reason; the
+  transcript is also copied to the clipboard as a consolation so the words
+  aren't lost.
+
+---
+
+## 10. Testing strategy
+
+- **Unit (no hardware, the bulk):** the entire `text/` pipeline is pure —
+  golden-file tests for commands (EN+DE), corrections (including the
+  "cube control → kubectl" style cases), casing across utterance sequences,
+  hallucination filtering. These encode the product's behavior; write them
+  alongside, not after, the pipeline.
+- **Component:** VAD segmentation over committed fixture WAVs (short clips w/
+  known speech spans) — assert utterance boundaries within tolerance. Runs on
+  CPU, no GPU needed.
+- **Integration (manual/local, GPU):** `pytest -m gpu` — fixture WAV →
+  whisper_local → pipeline → assert expected text. Excluded by default.
+- **Injection:** a `FakeInjector` capturing InjectJobs for pipeline tests; a
+  manual smoke script that types into Notepad.
+- **Bench:** `scriba --diagnose` doubles as the perf harness (per-stage
+  timings against the §6 budget).
+- No CI initially (the legacy repo's CI never ran once); local `pytest` +
+  `ruff` are the gate. GitHub Actions for lint+unit (CPU-only) can come later.
+
+---
+
+## 11. Security & privacy
+
+- Audio never leaves the machine in v1. The only network traffic is the
+  first-run model download from Hugging Face.
+- Everything the user says near an ARMED machine may be typed into the focused
+  window — the tray state must always be glanceable, and DISABLED must be one
+  click/hotkey away. Wake-word mode plays audible cues for state changes.
+- No telemetry.
+
+---
+
+## 12. Packaging & install (M4)
+
+- Primary: `uv tool install` / `pipx` from a wheel, `scriba` console script,
+  optional `--autostart` flag that registers a Run-key entry.
+- Stretch: PyInstaller one-dir build. Note: CUDA wheels make this multi-GB;
+  evaluate whether the wheel+uv path is simply better. Decision deferred to M4.
+- The `scriba.ico` at repo root is the app/tray icon asset.
+
+---
+
+## 13. Why not … (recorded for posterity)
+
+- **Rust/Go:** single-binary distribution is the only major win; every
+  latency-critical piece here is already native code behind Python bindings,
+  and the Windows UI/audio/injection ecosystem in Python is mature. Revisit
+  only if packaging (M4) becomes painful.
+- **WhisperX:** its extras (alignment, diarization) solve problems dictation
+  doesn't have; standalone Silero VAD gives us the same anti-hallucination
+  benefit with less machinery.
+- **insanely-fast-whisper:** optimized for batch throughput on large-VRAM
+  GPUs; dictation is one short utterance at a time on a 4 GB card.
+- **Streaming cloud STT for latency:** local turbo inference is already inside
+  the human-perceptible budget; the cloud adds cost, a network dependency, and
+  the v1 failure mode back.
+
+---
+
+## 14. Future work (explicitly out of v1 scope)
+
+- **AWS Transcribe backend** (`stt/aws_transcribe.py`): implements
+  `SttBackend` using the `amazon-transcribe` SDK (not the hand-rolled SigV4 of
+  v1); custom vocabulary synced from vocabulary.txt; **cost guards are
+  mandatory**: VAD-gated connect only, idle disconnect ≤ 10 s, and a local
+  daily minute budget that flips the tray to DEGRADED when exhausted.
+- **Client/server split:** the `detector → stt` queue boundary becomes a
+  WebSocket (16 kHz PCM frames up, transcripts down); a thin edge client owns
+  capture+injection, the engine runs in WSL, on a LAN box, or centrally with
+  one shared AWS key. The dataclasses in §5 are the wire schema, verbatim.
+- **Linux/macOS clients:** `inject/` grows `linux.py` (wtype/ydotool/uinput)
+  and `macos.py` (CGEventPost + Accessibility permission); capture and UI are
+  already cross-platform (PortAudio/Qt).
+- **Eager flush:** for long dictation, flush completed clauses at strong pause
+  boundaries before the utterance ends, trading a little accuracy (no right
+  context) for perceived latency.
+- **Custom "hey Scriba" wake-word model** via openWakeWord's synthetic
+  training pipeline.
+- **Personal accent fine-tune:** once the adaptation flywheel (§7.10d) has
+  accumulated a few hours of (audio, corrected text) pairs, LoRA-fine-tune the
+  Whisper model on the user's voice. Training won't fit the 4 GB laptop GPU —
+  but the user has CLI access to a local **NVIDIA DGX H200 cluster running
+  Run:ai**, which makes this a routine job rather than a cloud errand:
+  `runai training submit` a single-GPU PyTorch job (HF `transformers` + PEFT
+  LoRA on the turbo checkpoint; a few hours of personal audio trains in well
+  under an hour on an H200), sync the adaptation dataset up as the job's
+  input, then convert the merged model back for local inference with
+  `ct2-transformers-converter` (faster-whisper runs CTranslate2 format, not
+  HF checkpoints — the conversion step is mandatory, budget it into the
+  pipeline). The same cluster is the natural place to run openWakeWord's
+  synthetic-data training for the custom "hey Scriba" model. Personal
+  fine-tuning is the only real fix for individual-accent systematics, and it
+  is why flagged utterances are collected from day one.
+- **USB button/footswitch support** is free already: such devices enumerate as
+  keyboards, so binding the PTT/toggle hotkey to the button's keycode suffices.
+  Document it; no code needed.
+
+### 14.1 Readout mode — the reverse direction (TTS)
+
+Roadmap item, fully feasible, fully local. The user wants AI-agent output
+(Claude Code in particular) read aloud by a **female British-accented voice**:
+a spoken *summary* of what the agent wrote, with a voice keyword like "more
+details" to get the full picture — hands-free consumption to match the
+hands-free dictation.
+
+**TTS engine:** **Kokoro-82M** (Apache-licensed, ~82 M params) is the current
+recommendation: near-human quality, ships British female voices (`bf_emma`,
+`bf_isabella`), runs faster than real-time on CPU and trivially on the GPU
+alongside Whisper (it's tiny). Fallback option: Piper (`en_GB` voices, lighter,
+lower quality). Both are offline. A new `scriba/tts/` module mirrors `stt/`:
+a `TtsBackend` protocol, a Kokoro implementation, and playback through a
+sounddevice output stream with a playback queue (sentence-chunked so "stop"
+takes effect immediately, not after a monologue).
+
+**Getting the text out of Claude Code — two clean options, both supported:**
+
+1. **MCP server (preferred).** Scriba exposes a local MCP server with a
+   `speak(summary, full_text?)` tool. Claude Code is instructed (via
+   CLAUDE.md / output style) to call it with a 1–3 sentence spoken summary of
+   each substantive response. Elegant consequence: **the agent writes its own
+   summary** — no second summarizer model needed, and the summary quality is
+   the agent's own.
+2. **Stop-hook adapter.** A Claude Code Stop hook posts the final assistant
+   message to Scriba's local endpoint (localhost HTTP or named pipe). Scriba
+   then needs a summarizer of its own: a small local LLM (Llama 3.2 3B / Qwen
+   3B int4 — tight next to Whisper on 4 GB, or CPU) or a cheap cloud call.
+   This path works with *any* agent, not just MCP-capable ones, at the cost of
+   owning summarization.
+
+**Voice-command intents ("more details").** Scriba already owns the microphone
+and STT — readout mode adds an **intent layer** in front of dictation: while
+(or right after) something was read aloud, a small phrase table is matched
+before text is treated as dictation — "more details" (types the follow-up
+request into the focused agent window via the existing injector and hits
+Enter), "repeat", "read everything", "stop". This reuses the entire existing
+pipeline; the only new machinery is the mode flag and phrase table.
+
+**The one real technical constraint: half-duplex.** While TTS plays, the mics
+hear the speaker — Scriba must suspend VAD/wake-word during playback (plus a
+~300 ms tail) or it will transcribe its own voice. v1 of readout mode is
+half-duplex with the mic re-armed between sentence chunks (so "stop" works in
+the gaps); true barge-in (listening while speaking, via echo cancellation) is
+a further refinement, not a prerequisite.
+```
