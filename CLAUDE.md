@@ -67,6 +67,9 @@ PySide6 tray + settings UI. Modes: push-to-talk, toggle, wake word (car mode).
 
 ## Commands
 
-No build yet (design phase). Once M0 lands, this section should say:
+No build yet (design phase). Machine prerequisites (Git, uv, mic privacy
+toggle, GPU-driver notes) are in `docs/WINDOWS-SETUP.md` — no CUDA Toolkit and
+no build tools are needed; if a dependency tries to compile, that's a wrong
+dependency, not a missing compiler. Once M0 lands, this section should say:
 `uv sync` · `uv run scriba` · `uv run pytest` · `uv run ruff check` — keep it
 updated as the milestones progress.
