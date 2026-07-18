@@ -78,3 +78,21 @@ on first `uv sync`; no manual Python install.
   dependency). uv fetches its own 3.12 on first `uv sync`; always run things
   via `uv run ...`, never bare `python`. Leaving the Store install in place is
   harmless.
+- **Poor recognition in loud environments (car, etc.) — check mic input
+  level first.** On this machine the built-in mic array's system input
+  volume was found maxed at 100% (+35 dB), leaving zero headroom before
+  clipping in a noisy environment; clipped samples are corrupted before any
+  software (VAD, denoising, Whisper) ever sees them, and no downstream
+  processing can recover them. Check via Settings → Sound → Input → device
+  properties → Volume, and back off to ~60–70% if maxed. This was found
+  empirically after ruling out a more exotic theory: sounddevice/PortAudio
+  cannot request the WASAPI `AudioCategory_Communications` stream category
+  that apps like Windows dictation/Teams use (confirmed via raw
+  `IAudioClient2::SetClientProperties` COM calls) — but a controlled,
+  simultaneous-capture A/B test against identical synthetic noise showed no
+  measurable difference from setting it, so that lead was dropped rather
+  than pursued into a full custom WASAPI capture rewrite. The mic-gain
+  finding is the more mundane, more likely explanation; DESIGN.md does not
+  document a code-level fix here because none was needed or shipped —
+  see git history around this note if a software AGC/limiter is ever
+  revisited.

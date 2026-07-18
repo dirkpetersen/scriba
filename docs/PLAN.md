@@ -11,50 +11,75 @@ checklist passes on the target machine (Windows 11, RTX 3050 4 GB).
 
 Scaffolding only; no audio, no model.
 
-- [ ] `pyproject.toml` (uv-managed, Python 3.12), package layout per DESIGN §8,
+- [x] `pyproject.toml` (uv-managed, Python 3.12), package layout per DESIGN §8,
       console entry point `scriba = scriba.app:main`
-- [ ] `config.py`: load/create `%APPDATA%\Scriba\config.toml` with the DESIGN
+- [x] `config.py`: load/create `%APPDATA%\Scriba\config.toml` with the DESIGN
       §7.9 schema and defaults; validation with clear errors
-- [ ] Logging setup (rotating file + console), `%LOCALAPPDATA%\Scriba\logs\`
-- [ ] Single-instance named mutex (carry over the v1 trick)
-- [ ] Qt app + tray icon with the full state-color set (states driven by a
-      dummy timer for now), context menu skeleton, Quit works cleanly
-- [ ] `pytest` + `ruff` wired up; config round-trip test
+- [x] Logging setup (rotating file + console), `%LOCALAPPDATA%\Scriba\logs\`
+- [x] Single-instance named mutex (carry over the v1 trick)
+- [x] Qt app + tray icon with the full state-color set (states driven by the
+      real pipeline now, not a dummy timer — M1 landed alongside M0 in this
+      pass), context menu skeleton, Quit works cleanly
+- [x] `pytest` + `ruff` wired up; config round-trip test
 
-**Accept:** `uv run scriba` shows a tray icon on Windows, menu works, second
-launch refuses to start, log file appears.
+**Accept:** verified on the target machine — `uv run scriba` constructs the
+full app (config load, logging, mutex, tray, all pipeline modules) without
+error and shows the tray; a second `SingleInstance` correctly reports
+already-running; the log file appears at
+`%LOCALAPPDATA%\Scriba\logs\scriba.log`. `uv run pytest` (129 passed) and
+`uv run ruff check` are clean.
 
 ## M1 — Push-to-talk dictation, end to end
 
 The core value: hold a key, speak, text appears in the focused window.
 
-- [ ] Audio capture: enumerate devices, one 16 kHz/int16/512-sample stream per
+- [x] Audio capture: enumerate devices, one 16 kHz/int16/512-sample stream per
       enabled device, pre-roll ring buffers, frame queue (DESIGN §7.1)
-- [ ] Silero VAD + segmentation state machine (§7.2); PTT mode wires hotkey
-      down/up to LISTENING/endpoint
-- [ ] Mic arbiter: per-device VAD, winner sticky per utterance (§7.2)
-- [ ] Global hotkeys incl. key-up for PTT (§7.8)
-- [ ] `SttBackend` protocol + `whisper_local.py`: large-v3-turbo,
+- [x] Silero VAD + segmentation state machine (§7.2); toggle mode wires the
+      `enabled` gate to whether new utterances may start
+- [x] Mic arbiter: per-device VAD, winner sticky per utterance (§7.2)
+- [x] Global hotkeys incl. key-up for PTT (§7.8)
+- [x] `SttBackend` protocol + `whisper_local.py`: large-v3-turbo,
       int8_float16, CUDA; warmup at load; runtime model download with tray
       PROVISIONING progress (§7.4)
-- [ ] Minimal postproc: hallucination filter + casing/spacing state only
-- [ ] Injector: SendInput `KEYEVENTF_UNICODE` incl. surrogate pairs and Enter;
+- [x] Minimal postproc: hallucination filter + casing/spacing state only
+- [x] Injector: SendInput `KEYEVENTF_UNICODE` incl. surrogate pairs and Enter;
       foreground-window query; clipboard consolation on failure (§7.7)
-- [ ] Streaming partials (§7.4a): re-decode loop with LocalAgreement-2,
+- [x] Streaming partials (§7.4a): re-decode loop with LocalAgreement-2,
       eager/stable policies, injector revision protocol (backspace + retype),
       abandon-on-focus-change, auto-off on CPU fallback
-- [ ] Model fallback ladder (§9) — at minimum rungs 1, 3, 4 with DEGRADED state
-- [ ] Toggle mode (VAD-armed continuous dictation)
-- [ ] `--diagnose` flag (§7.10 → devices, CUDA, model cache, timing benchmark)
+- [x] Model fallback ladder (§9) — all 4 rungs, with DEGRADED state
+- [x] Toggle mode (VAD-armed continuous dictation)
+- [x] `--diagnose` flag (§7.10 → devices, CUDA, model cache; timing benchmark
+      still prints a "not yet wired" placeholder rather than fake numbers —
+      see the known-limitations note below)
 
-**Accept (manual, on target machine):** first run downloads the model with
-visible tray progress; dictating a 2–3 sentence paragraph into Notepad,
-Windows Terminal, and Claude Code lands correctly (incl. an umlaut word typed
-natively); **words start appearing ≤ ~1.5 s after speech starts and visibly
-self-correct as context clarifies — subjectively at least as good as Win+H**;
-final text after end-of-speech < 1.5 s measured by `--diagnose` figures; 10
-minutes of toggle-mode use shows no memory growth, no stray text while silent;
-unplugging/replugging a USB mic recovers with a toast.
+**Known M1 integration limitations** (acceptable for this pass, noted rather
+than silently glossed over):
+- Push-to-talk's key-*up* only stops new utterances from starting; an
+  utterance already in flight when the key is released finishes via VAD's own
+  `endpoint_silence_ms`, not an instant cut. True instant-on-release PTT needs
+  a `Detector.force_endpoint()` hook that doesn't exist yet.
+- `wake_word` mode is selectable in the tray menu but does nothing (no wake
+  detector is wired — openWakeWord integration is M3); manually flipping
+  "Enabled" while in this mode behaves like toggle mode.
+- `--diagnose`'s STT benchmark line is still a placeholder (needs a loaded
+  backend, which `--diagnose` deliberately doesn't provision).
+
+**Accept (manual, on target machine) — core flow verified live:** first-run
+model download showed tray progress and loaded on CUDA rung 1 (after fixing a
+DLL-path issue, see DESIGN §8 deviations); the user dictated multi-sentence
+mixed EN/DE text into Claude Code with streaming partials working. A
+one-line detector bug (`dict.setdefault` eagerly constructing a ~190 ms ONNX
+session per 16 ms audio frame) initially made dictation appear dead — found
+via live probing plus four parallel code-review agents, fixed, and verified.
+Still pending from the checklist: umlaut smoke test in Notepad/Terminal,
+`--diagnose` latency figures (benchmark still unwired), 10-minute toggle
+soak / memory-growth check, USB mic unplug/replug toast. Known accuracy
+gaps are M2 scope: technical vocabulary ("Claude Code" -> "clot code") needs
+the vocabulary system; `mixed` mode sometimes translates German utterances
+to English when per-utterance detection picks EN — tune
+`language_confidence_min` / prefer fixed `de` via the language hotkey.
 
 ## M2 — Vocabulary, commands, languages
 

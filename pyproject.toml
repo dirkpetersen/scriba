@@ -1,0 +1,76 @@
+[project]
+name = "scriba"
+version = "0.2.0"
+description = "Local-first voice dictation for Windows (faster-whisper + Silero VAD + PySide6 tray)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+dependencies = [
+    "faster-whisper>=1.0.3",
+    "sounddevice>=0.4.7",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "onnxruntime>=1.18",
+    "openwakeword>=0.6.0",
+    "PySide6>=6.7",
+    "rapidfuzz>=3.9",
+    "pywin32>=306; sys_platform == 'win32'",
+    "keyboard>=0.13.5",
+    "tomlkit>=0.13",
+    "requests>=2.31",
+    # Spectral-gating background-noise suppression applied to the audio
+    # buffer right before each Whisper decode (DESIGN.md §7.4, user request).
+    # Pure numpy/scipy, no compiled extension -- deepfilternet (a real neural
+    # denoiser) was tried first and rejected: its deepfilterlib dependency
+    # needs a Rust/cargo toolchain to build, violating this project's
+    # no-compilation rule.
+    "noisereduce>=3.0",
+    # CUDA runtime wheels for faster-whisper (DESIGN.md §3): the target machine
+    # always has the RTX 3050, so these are plain dependencies, not an extras
+    # group -- avoids the CPU fallback ladder silently missing GPU wheels
+    # because `--extra gpu` was forgotten.
+    "nvidia-cudnn-cu12>=9.1; sys_platform == 'win32'",
+    "nvidia-cublas-cu12>=12.4; sys_platform == 'win32'",
+]
+
+[project.scripts]
+scriba = "scriba.app:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.6",
+]
+# Only needed to build ScribaSetup.exe (installer/install.py); most
+# contributors never touch this, hence its own group instead of living in dev.
+installer = [
+    "pyinstaller>=6.10",
+]
+
+[tool.uv]
+# Native-Windows-only project (CLAUDE.md locked decision) -- restricts the
+# resolver so it doesn't need Linux-only wheels (e.g. openwakeword's
+# tflite-runtime marker) that don't exist for our Python version.
+environments = ["sys_platform == 'win32'"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["scriba"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "gpu: requires a CUDA GPU and downloaded models (excluded by default)",
+    "cpu_stt: real faster-whisper CPU smoke test (tiny model); needs network to download the model on first run, excluded by default -- run explicitly via `pytest -m cpu_stt` (see .github/workflows/ci.yml's cpu-stt-smoke job)",
+]
+addopts = "-m 'not gpu and not cpu_stt'"

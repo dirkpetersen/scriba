@@ -1,0 +1,96 @@
+name: Build installer
+
+# Builds ScribaSetup.exe (installer/install.py packaged via PyInstaller,
+# see DESIGN.md §12 and the `installer` dependency-group in pyproject.toml).
+# Two triggers:
+#   - push of a `v*` tag: builds AND attaches the exe to a GitHub Release
+#     for that tag (created if it doesn't already exist).
+#   - workflow_dispatch: manual run for testing this workflow without
+#     needing a real release tag; artifact only, no release is touched.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  build-installer:
+    name: Build ScribaSetup.exe
+    runs-on: windows-latest
+    # contents: write is required by the "Attach exe to GitHub Release" step
+    # below (gh release create/upload) -- repos created after Feb 2023
+    # default GITHUB_TOKEN to read-only, so this must be explicit rather
+    # than relying on repo-level settings (found in review).
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+
+      # --only-group installer + --no-sync (below) skips the entire app
+      # dependency tree (PySide6, the multi-hundred-MB nvidia-cudnn-cu12/
+      # nvidia-cublas-cu12 wheels, faster-whisper, ...) that install.py
+      # itself never imports -- it's a stdlib-only script; only PyInstaller
+      # itself is needed to package it (found in review).
+      # --locked fails loudly on pyproject/uv.lock drift instead of
+      # silently re-resolving.
+      - name: Install PyInstaller (installer group only)
+        run: uv sync --locked --only-group installer
+
+      # Reproduces the local build: run from installer/ so PyInstaller's
+      # default --distpath/--workpath ("dist"/"build" relative to cwd) land
+      # at installer/dist and installer/build -- matching what
+      # install.py's _repo_root() expects when frozen (sys.executable at
+      # installer/dist/ScribaSetup.exe, three `.parent`s up to repo root).
+      # This is the one-file/--windowed invocation verified locally to
+      # produce a working, --selftest-passing exe before this workflow was
+      # written. --no-sync: the previous step already synced exactly what's
+      # needed; don't let `uv run` implicitly re-sync the full default group.
+      - name: Build ScribaSetup.exe
+        working-directory: installer
+        run: uv run --no-sync pyinstaller --onefile --windowed --icon=../scriba.ico --name ScribaSetup install.py
+
+      # --windowed makes ScribaSetup.exe a GUI-subsystem binary: the default
+      # pwsh shell does not wait for those, so a bare invocation always
+      # "succeeds" (exit code never set) regardless of whether --selftest
+      # actually passed -- Start-Process -Wait -PassThru is required to get
+      # a real exit code (found in review; confirmed this was a silent
+      # no-op before the fix).
+      - name: Verify the built exe runs
+        working-directory: installer
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath .\dist\ScribaSetup.exe -ArgumentList '--selftest' -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Error "ScribaSetup.exe --selftest exited with code $($p.ExitCode)"
+            exit $p.ExitCode
+          }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScribaSetup
+          path: installer/dist/ScribaSetup.exe
+
+      # Only tag pushes get a Release attachment; workflow_dispatch runs stop
+      # at the artifact above. Uses `gh` (preinstalled on GitHub-hosted
+      # Windows runners, already authenticated via GITHUB_TOKEN) rather than
+      # a third-party release-upload action, to keep this workflow's action
+      # surface small -- `gh release create`/`upload` cover both the
+      # release-doesn't-exist-yet and already-exists cases.
+      - name: Attach exe to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" installer/dist/ScribaSetup.exe --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" installer/dist/ScribaSetup.exe --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes
+          fi

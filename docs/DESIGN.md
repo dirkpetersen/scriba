@@ -84,7 +84,7 @@ These were discussed and settled with the user. Do not re-litigate without askin
 | Platform for v1 | **Native Windows, single process** | Mic capture and keystroke injection must be on Windows anyway; WSL adds GPU paravirtualization overhead and an "is WSL running" failure mode. WSL remains a dev environment only. |
 | Language | **Python 3.12** | Latency lives in the STT model (C++ under faster-whisper), not the runtime. Python has mature libs for every component. Clean seams allow later rewrites of individual pieces. |
 | STT engine | **faster-whisper** (CTranslate2) | Best default per ecosystem consensus; int8 quantization fits the 4 GB card; `hotwords` support. |
-| Model | **`large-v3-turbo`, `int8_float16`, CUDA** (default) | Multilingual (required for German — note: **Distil-Whisper models are English-only**, so `distil-large-v3` is offered only as an opt-in for English-only use). ~1.5–2 GB VRAM. Fallback ladder in §9. |
+| Model | **`large-v3-turbo`, `int8_float16`, CUDA** when `general.language != "en"`; **`distil-large-v3`** when `general.language == "en"` | Multilingual is required for German (note: **Distil-Whisper models are English-only**). **Deviation (implemented, user request):** originally `distil-large-v3` was an opt-in choice; it's now *automatically* selected whenever the language is plain English and swapped for the multilingual model on any other language/mixed/auto selection — `scriba.stt.language.model_for_language()` is the single source of truth, enforced in `ScribaApp.__init__` so `stt.model` is never independently configurable (a stale/hand-edited value is silently overwritten). Switching triggers an unload+reload with a tray toast sequence (§9). ~1.5–2 GB VRAM for the large model. Fallback ladder in §9. |
 | VAD | **Silero VAD** (ONNX, CPU) | Tiny (~2 MB), accurate, 512-sample/32 ms frames align with capture blocks. Also prevents Whisper silence-hallucinations by construction. |
 | Wake word | **openWakeWord** (ONNX, CPU) | Free, offline, runs continuously at negligible CPU. Pre-trained phrase first; custom "Scriba" phrase later (§7.3). |
 | UI toolkit | **PySide6 (Qt)** | One framework covers tray icon, native menus, toasts, a real settings dialog, and a first-run/download progress UI. Cross-platform for free later. |
@@ -165,6 +165,22 @@ the app down silently (§9).
 
 ### Messages (dataclasses)
 
+**Deviation (implemented):** these dataclasses live in `scriba/messages.py`
+(a small shared module not listed in §8's original layout — added there now).
+More substantially, the single end-of-utterance `Utterance` message described
+here can't carry the streaming re-decode loop (§7.4a): that loop needs to see
+audio *before* the VAD endpoint fires, which a single post-endpoint message
+can't express. It is replaced by `AudioChunk`, emitted incrementally by the
+detector while an utterance is open; non-streaming mode
+(`streaming.enabled = false`) is the same shape with exactly one
+`is_final=True` chunk carrying the whole utterance, so both modes share one
+message type and one STT-worker code path. `utterance_id` (minted by the
+detector per utterance) threads through `AudioChunk` -> `Transcript` ->
+`InjectJob` so the injector can tell "new utterance" from "revision of the
+utterance I'm already typing". `ForegroundWindow` and `PostprocState` were
+also added (not shown in the original snippet) to make the §7.5 casing/window
+reset behavior an explicit, pure function argument — see §7.5 below.
+
 ```python
 @dataclass
 class AudioFrame:
@@ -173,12 +189,13 @@ class AudioFrame:
     t_monotonic: float
 
 @dataclass
-class Utterance:
-    pcm: np.ndarray         # int16 mono 16 kHz, pre-roll included
+class AudioChunk:
+    utterance_id: int
     device_id: str
-    t_start: float
-    t_end: float
-    language: str | None    # config override, or None for auto
+    pcm: np.ndarray | None  # incremental int16 mono samples; None on a pure finalize marker
+    t_monotonic: float
+    is_final: bool = False  # True on the chunk carrying (or following) the VAD endpoint
+    language: str | None = None  # language-policy resolution, set on the utterance's first chunk
 
 @dataclass
 class Transcript:
@@ -187,12 +204,27 @@ class Transcript:
     no_speech_prob: float
     duration_s: float
     language: str
+    utterance_id: int = 0
     is_partial: bool = False   # streaming partial vs. final (§7.4a)
 
 @dataclass
 class InjectJob:
     text: str               # text to type; may contain '\n' (injected as Enter)
     erase: int = 0          # backspaces to send first (streaming revision, §7.4a)
+    utterance_id: int = 0
+    is_final: bool = False
+
+@dataclass
+class ForegroundWindow:
+    hwnd: int
+    title: str
+    exe_name: str
+
+@dataclass
+class PostprocState:
+    capitalize_next: bool = True
+    space_before_next: bool = False
+    last_hwnd: int | None = None
 ```
 
 ### State machine
@@ -337,6 +369,24 @@ class SttBackend(Protocol):
 - First inference is slow (CUDA context + kernel warmup): run a ~1 s silent
   warmup transcription at load time so the first real dictation isn't laggy.
 
+**Deviation (implemented, user request): background-noise suppression.**
+The user reported background noise hurting accuracy noticeably more than it
+does for Windows' own dictation. `_denoise()` applies `noisereduce`
+(spectral gating, `stationary=False` to adapt to fluctuating noise rather
+than assuming a fixed floor) to the float32 audio buffer immediately before
+every decode call (partial and final), gated by `stt.denoise` (default on).
+Benchmarked on this machine: ~20-60ms for a 1.5-10s buffer, negligible
+against the §6 latency budget. `deepfilternet` (a real neural denoiser,
+likely higher quality) was evaluated first and rejected: its `deepfilterlib`
+dependency requires a Rust/cargo toolchain to build from source, with no
+prebuilt Windows wheel -- violates this project's no-compilation rule
+(`docs/WINDOWS-SETUP.md`). `noisereduce` is pure numpy/scipy, no compiled
+extension, proven fast. Applied only to the STT decode path, not to the
+VAD/segmentation input -- Silero VAD's own probability estimates are left
+on raw audio, since denoising is tuned for decode-time intelligibility, not
+speech/silence boundary detection, and touching VAD input was out of scope
+for this fix.
+
 **Model provisioning / first run:**
 
 - Models download **at runtime** from Hugging Face (faster-whisper handles
@@ -407,9 +457,14 @@ so long dictation stays real-time without losing context.
 
 ### 7.5 Text post-processing (`scriba/text/`)
 
-**Pure functions only** — `(Transcript, PostprocState, config) → (list[InjectJob], PostprocState)`.
+**Pure functions only** —
+`(Transcript, PostprocState, config, foreground: ForegroundWindow | None) → (list[InjectJob], PostprocState)`.
 No I/O, no globals: this is the most unit-testable and most behavior-defining
-part of the app.
+part of the app. **Deviation (implemented):** `foreground` is an explicit
+argument (the injector's foreground-window query result, threaded in by the
+caller) rather than the pipeline querying it itself — needed so the §7.5
+point 5 "reset on window change" rule stays a pure comparison instead of I/O
+inside `text/`.
 
 The full pipeline runs on **final** transcripts only; streaming partials
 (§7.4a) bypass it except for whitespace normalization, and the injector's
@@ -423,8 +478,10 @@ Pipeline order:
    or text ∈ blocklist. Blocklist ships with Whisper's classic silence
    artifacts ("Thank you.", "Thanks for watching!", "you", subtitle credits)
    per language, extensible in config.
-2. **Spoken commands.** Token-level command table, EN+DE, applied to trailing
-   and standalone commands (v1 legacy parity plus new entries):
+2. **Spoken commands** (`scriba/text/commands.py`, implemented in M1 rather
+   than M2 — pulled forward on user request). Token-level command table,
+   EN+DE, applied to trailing and standalone commands (v1 legacy parity plus
+   new entries):
 
    | Spoken (EN) | Spoken (DE) | Output |
    |---|---|---|
@@ -435,13 +492,29 @@ Pipeline order:
    | new line | neue zeile | `\n` |
    | new paragraph | neuer absatz | `\n\n` |
    | colon | doppelpunkt | `:` |
+   | hit enter | — | `\n` (added; user asked for an explicit "hit enter" -> Enter command) |
 
-   The table lives in config so the user can extend it. Matching is
-   case-insensitive on the final tokens after stripping Whisper's own trailing
-   punctuation (Whisper often already appends "." — dedupe).
-3. **Filler removal** (configurable, default on): strip `um, uh, hm, ah, er,
-   äh, ähm, ...` word-initial and mid-sentence, with the legacy regex as a
-   starting point but per-language lists.
+   **Deviations (implemented):** "sets sentence-end state" is not tracked as
+   separate boolean state — `casing.py`'s existing rule (capitalize after
+   text ending in `.?!`/`\n`) already derives it purely from the *output*
+   text, so a command only needs to produce the right trailing character.
+   "Applied to trailing and standalone" is implemented literally and only —
+   i.e. a command phrase is recognized as the *entire* utterance or the
+   words at the very *end* of it, never replaced mid-utterance — so a
+   literal sentence like "the trial period is 30 days" is never mangled.
+   The table does not live in config yet (it's a Python tuple in
+   `commands.py`); making it config-editable is deferred, unlike the rest of
+   this deviation which was pulled forward.
+3. **Filler removal** (`scriba/text/pipeline.py`, implemented in M1 rather
+   than M2; configurable via `postproc.filler_removal`, default on): strips
+   `um, umm, uh, uhh, hm, hmm, ah, er, erm, äh, ähm, ähh` word-boundary
+   matches (case-insensitive), regardless of the utterance's detected
+   language (simpler than per-language lists and low false-positive risk,
+   since the two lists barely overlap). **Deviation:** runs *before* spoken
+   commands, reversing the order listed above — its whitespace-collapsing
+   cleanup would otherwise destroy a `new line`/`new paragraph`/`hit enter`
+   command's just-produced `\n`/`\n\n`. Fillers never occur inside a command
+   phrase, so the swap is equivalent for every other case.
 4. **Vocabulary correction** — see §7.6.
 5. **Casing & spacing state machine.** Carries `PostprocState` across
    utterances: if the previous injected text ended a sentence (`.?!` or `\n`),
@@ -517,10 +590,23 @@ PySide6 throughout; the Qt event loop is the main thread.
   - Settings…
   - Open log / Open vocabulary
   - Quit
+  - **Deviation (implemented):** no separate Model menu item -- model choice
+    is derived from Language, not independent, see §9's idle-unload note and
+    `scriba.stt.language.model_for_language`.
+  - **Deviation (implemented, user request):** `scriba/ui/tray_pin.py`
+    best-effort pins the tray icon to Windows' always-visible area (like
+    OneDrive/VPN clients) instead of defaulting into the hidden-icons
+    overflow chevron, via the undocumented
+    `HKCU\Control Panel\NotifyIconSettings\<uid>\IsPromoted` registry value
+    (verified empirically on Windows 11 against another already-pinned
+    app's own entry). Not a public API; wrapped so any failure is silent and
+    only ever affects icon *position*, never functionality. Called ~3s after
+    `tray.show()` since Windows registers the entry lazily; persists across
+    future launches once it succeeds once.
 - **Settings window** (opened on demand, closable without quitting):
   - *Audio*: device list with enable checkboxes + live level meters, per-device priority
-  - *Model*: model choice (turbo / distil-large-v3 [EN-only, labeled as such] /
-    small), device (auto/cuda/cpu), current VRAM note, "re-download model"
+  - *Model*: read-only display of the active model (derived from Language, see above),
+    device (auto/cuda/cpu), current VRAM note, "re-download model"
   - *Vocabulary*: editor for vocabulary.txt
   - *Commands & text*: spoken-command table, filler removal toggle, umlaut fold
   - *Hotkeys*: PTT key, toggle key, language-switch key (with capture widget)
@@ -700,11 +786,16 @@ the flagged pairs are a goldmine for writing better sounds-like aliases.
 scriba/                     # the package (proper __init__.py, relative imports)
   app.py                    # entry point: bootstrap, single-instance mutex, Qt loop
   config.py
+  messages.py               # shared dataclasses: AudioFrame/AudioChunk/Transcript/
+                             # InjectJob/ForegroundWindow/PostprocState (§5, deviation)
+  logging_setup.py
+  singleinstance.py         # named-mutex single-instance guard
   audio/
     capture.py              # device enumeration, streams, ring buffers, hot-plug
   detect/
-    arbiter.py              # multi-mic arbitration
-    vad.py                  # Silero wrapper + segmentation state machine
+    arbiter.py               # multi-mic arbitration
+    vad.py                  # Silero ONNX wrapper (via onnxruntime, no torch) +
+                             # segmentation state machine
     wakeword.py             # openWakeWord wrapper
   stt/
     base.py                 # SttBackend protocol, Transcript
@@ -741,10 +832,26 @@ pyproject.toml              # uv-managed; console entry `scriba = scriba.app:mai
 ```
 
 Dependencies (runtime): `faster-whisper`, `sounddevice`, `numpy`,
-`silero-vad` (or onnxruntime + bundled model), `openwakeword`, `PySide6`,
-`rapidfuzz`, `pywin32`, `keyboard` (or ctypes hook), `tomlkit`;
-GPU extra: `nvidia-cudnn-cu12`, `nvidia-cublas-cu12`.
+`onnxruntime` + a runtime-downloaded Silero VAD ONNX file, `openwakeword`,
+`PySide6`, `rapidfuzz`, `pywin32`, `keyboard`, `tomlkit`; plain (non-extra)
+deps: `nvidia-cudnn-cu12`, `nvidia-cublas-cu12`.
 Dev: `pytest`, `ruff`.
+
+**Deviations (implemented):**
+- The `silero-vad` PyPI package unconditionally requires `torch`+`torchaudio`
+  (multi-GB; only its `onnx-cpu` extra skips them) — this contradicts the "tiny
+  ONNX, no torch" rationale in §3, so `detect/vad.py` depends on `onnxruntime`
+  directly and downloads the ~2 MB `silero_vad.onnx` file at runtime (same
+  provisioning treatment as the STT model, into `models_dir()`), not the pip
+  package.
+- `nvidia-cudnn-cu12`/`nvidia-cublas-cu12` are plain dependencies, not a pip
+  extras group as "GPU extra" might imply — there is exactly one target
+  machine (§0) and it always has the RTX 3050, so an extras flag would only
+  create a way to forget them.
+- `pyproject.toml` sets `[tool.uv] environments = ["sys_platform == 'win32'"]`
+  so uv's universal resolver doesn't try to solve Linux-only markers (e.g.
+  `openwakeword`'s `tflite-runtime` dependency) that have no matching wheel
+  for our Python version — irrelevant anyway since this is Windows-only.
 
 ---
 
@@ -761,6 +868,21 @@ tray tooltip; below rung 1 ⇒ DEGRADED/orange):
 
 Trigger rungs on: CUDA unavailable, cuDNN load failure, CUDA OOM (also caught
 per-transcription — an OOM mid-run drops a rung and retries the utterance once).
+
+**Idle-unload (implemented, user request, not in the original design):**
+CTranslate2 keeps a full host-RAM copy of the model weights resident
+alongside the GPU copy for the life of the model object — confirmed
+empirically (host RAM scales with model file size, e.g. ~1.35 GB for
+large-v3-turbo vs. ~200 MB for `small`; `gc.collect()`/forcing a Windows
+working-set trim don't reduce it) and matches an open, unresolved upstream
+issue ([CTranslate2 #1787](https://github.com/OpenNMT/CTranslate2/issues/1787)).
+No supported flag exists to disable this. Mitigation: `stt.idle_unload_minutes`
+(default 60, 0 disables) unloads the backend after that long with dictation
+disabled, freeing the host RAM; the next activation (hotkey/tray) or an
+explicit model switch (new tray Model submenu, large-v3-turbo vs.
+`distil-large-v3`) transparently reloads it first — tray goes PROVISIONING
+with a start/live-progress/finish toast sequence so a multi-second reload is
+never mistaken for the app being stuck, then dictation proceeds.
 
 **Other failures:**
 

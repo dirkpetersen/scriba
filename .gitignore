@@ -170,3 +170,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 .aider*
+
+# Generated at install time by installer/install.py's write_launcher_script()
+# -- hardcodes the local machine's uv/repo paths, not source.
+/scriba_launch.vbs
