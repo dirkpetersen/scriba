@@ -238,6 +238,19 @@ class AudioCapture:
         pre_roll_samples = round(self._config.vad.pre_roll_ms * _TARGET_RATE / 1000)
         preroll = RingBuffer(pre_roll_samples)
 
+        if self._config.audio.wasapi_speech_category and entry.get("_is_wasapi"):
+            stream = self._try_open_wasapi_speech(device_id, name, preroll)
+            if stream is not None:
+                self._streams[device_id] = stream
+                self._prerolls[device_id] = preroll
+                logger.info(
+                    "opened input device %r (id=%s) via WASAPI Speech category", name, device_id
+                )
+                return
+            logger.warning(
+                "WASAPI Speech-category capture failed for %r, falling back to sounddevice", name
+            )
+
         stream = self._try_open(index, _TARGET_RATE, _BLOCKSIZE, device_id, preroll)
         if stream is None:
             native_blocksize = max(1, round(native_rate * _BLOCKSIZE / _TARGET_RATE))
@@ -249,6 +262,22 @@ class AudioCapture:
         self._streams[device_id] = stream
         self._prerolls[device_id] = preroll
         logger.info("opened input device %r (id=%s)", name, device_id)
+
+    def _try_open_wasapi_speech(self, device_id: str, name: str, preroll: RingBuffer):
+        # Imported lazily: pycaw/comtypes are only needed when this opt-in path
+        # is actually used, and the module itself covers the un-opened-yet
+        # samplerate this constructs -- open() must run before _make_callback
+        # can know the real (device mix-format) source_rate.
+        from .wasapi_speech import WasapiSpeechStream
+
+        stream = WasapiSpeechStream(name)
+        try:
+            stream.open()
+        except Exception:
+            logger.warning("WASAPI Speech-category open failed for %r", name, exc_info=True)
+            return None
+        stream.start(self._make_callback(device_id, preroll, stream.samplerate))
+        return stream
 
     def _try_open(
         self, index: int, samplerate: int, blocksize: int, device_id: str, preroll: RingBuffer

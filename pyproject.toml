@@ -16,6 +16,11 @@ dependencies = [
     "rapidfuzz>=3.9",
     "pywin32>=306; sys_platform == 'win32'",
     "keyboard>=0.13.5",
+    # WASAPI COM bindings (IMMDeviceEnumerator/IMMDevice/IAudioClient) reused
+    # by scriba.audio.wasapi_speech for the opt-in AudioCategory_Speech
+    # capture path (DESIGN.md §7.1 deviation note) -- extended there with the
+    # two interfaces pycaw itself doesn't wrap (IAudioClient2, IAudioCaptureClient).
+    "pycaw>=20240210; sys_platform == 'win32'",
     "tomlkit>=0.13",
     "requests>=2.31",
     # Spectral-gating background-noise suppression applied to the audio

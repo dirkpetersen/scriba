@@ -1,8 +1,18 @@
+import queue
+
 import numpy as np
 import pytest
 
 from scriba.audio import capture
-from scriba.audio.capture import DeviceInfo, RingBuffer, _device_id, list_devices, resample_to_16k
+from scriba.audio.capture import (
+    AudioCapture,
+    DeviceInfo,
+    RingBuffer,
+    _device_id,
+    list_devices,
+    resample_to_16k,
+)
+from scriba.config import Config
 
 # --- RingBuffer ---------------------------------------------------------
 
@@ -268,3 +278,60 @@ class TestFrameChunker:
         for chunk in parts:
             out.extend(chunker.push(chunk))
         assert np.concatenate(out).tolist() == [0, 1, 2, 3, 4, 5, 6, 7]
+
+
+# --- _open_device: WASAPI Speech-category opt-in wiring (no real hardware) --
+
+
+def _make_capture(wasapi_speech_category: bool) -> AudioCapture:
+    config = Config()
+    config.audio.wasapi_speech_category = wasapi_speech_category
+    return AudioCapture(config, queue.Queue())
+
+
+_WASAPI_ENTRY = {"name": "Mic", "index": 0, "default_samplerate": 16000.0, "_is_wasapi": True}
+_NON_WASAPI_ENTRY = {"name": "Mic", "index": 0, "default_samplerate": 16000.0, "_is_wasapi": False}
+
+
+def test_open_device_prefers_wasapi_speech_when_enabled_and_available(monkeypatch):
+    cap = _make_capture(wasapi_speech_category=True)
+    monkeypatch.setattr(cap, "_try_open_wasapi_speech", lambda *a, **k: "WASAPI_STREAM")
+    monkeypatch.setattr(cap, "_try_open", lambda *a, **k: pytest.fail("should not fall back"))
+
+    cap._open_device("dev1", _WASAPI_ENTRY)
+
+    assert cap._streams["dev1"] == "WASAPI_STREAM"
+
+
+def test_open_device_falls_back_to_sounddevice_when_wasapi_open_fails(monkeypatch):
+    cap = _make_capture(wasapi_speech_category=True)
+    monkeypatch.setattr(cap, "_try_open_wasapi_speech", lambda *a, **k: None)
+    monkeypatch.setattr(cap, "_try_open", lambda *a, **k: "SD_STREAM")
+
+    cap._open_device("dev1", _WASAPI_ENTRY)
+
+    assert cap._streams["dev1"] == "SD_STREAM"
+
+
+def test_open_device_skips_wasapi_when_config_disabled(monkeypatch):
+    cap = _make_capture(wasapi_speech_category=False)
+    monkeypatch.setattr(
+        cap, "_try_open_wasapi_speech", lambda *a, **k: pytest.fail("should be skipped")
+    )
+    monkeypatch.setattr(cap, "_try_open", lambda *a, **k: "SD_STREAM")
+
+    cap._open_device("dev1", _WASAPI_ENTRY)
+
+    assert cap._streams["dev1"] == "SD_STREAM"
+
+
+def test_open_device_skips_wasapi_when_entry_not_wasapi(monkeypatch):
+    cap = _make_capture(wasapi_speech_category=True)
+    monkeypatch.setattr(
+        cap, "_try_open_wasapi_speech", lambda *a, **k: pytest.fail("should be skipped")
+    )
+    monkeypatch.setattr(cap, "_try_open", lambda *a, **k: "SD_STREAM")
+
+    cap._open_device("dev1", _NON_WASAPI_ENTRY)
+
+    assert cap._streams["dev1"] == "SD_STREAM"

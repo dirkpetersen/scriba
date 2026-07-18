@@ -58,6 +58,17 @@ class GeneralConfig:
 class AudioConfig:
     enabled_devices: list[str] = field(default_factory=list)
     device_priority: list[str] = field(default_factory=list)
+    # Opens WASAPI devices via a raw IAudioClient2 capture path requesting
+    # AudioCategory_Speech instead of sounddevice/PortAudio (which cannot
+    # request any WASAPI stream category at all -- confirmed via source: its
+    # WasapiSettings only exposes exclusive/auto_convert/explicit_sample_format).
+    # On this machine that category makes the driver attach AEC + NoiseSuppression
+    # + AutomaticGainControl (queried live via the WinRT AudioCaptureEffectsManager,
+    # DESIGN.md deviation note) that the default/no-category path never gets.
+    # Default ON per explicit user decision despite mixed lab-test evidence
+    # (see the note): falls back to the sounddevice path per-device if the
+    # WASAPI open fails, so worst case is no different from before.
+    wasapi_speech_category: bool = True
 
 
 @dataclass
@@ -265,6 +276,8 @@ language = "en"                # en | de | auto | mixed
 [audio]
 enabled_devices = []           # empty = all input devices
 device_priority = []           # optional ordered list of preferred device names
+wasapi_speech_category = true  # raw WASAPI capture requesting AudioCategory_Speech;
+                                # falls back to sounddevice per-device if unavailable
 
 [vad]
 threshold = 0.5

@@ -85,14 +85,18 @@ on first `uv sync`; no manual Python install.
   software (VAD, denoising, Whisper) ever sees them, and no downstream
   processing can recover them. Check via Settings → Sound → Input → device
   properties → Volume, and back off to ~60–70% if maxed. This was found
-  empirically after ruling out a more exotic theory: sounddevice/PortAudio
-  cannot request the WASAPI `AudioCategory_Communications` stream category
-  that apps like Windows dictation/Teams use (confirmed via raw
-  `IAudioClient2::SetClientProperties` COM calls) — but a controlled,
-  simultaneous-capture A/B test against identical synthetic noise showed no
-  measurable difference from setting it, so that lead was dropped rather
-  than pursued into a full custom WASAPI capture rewrite. The mic-gain
-  finding is the more mundane, more likely explanation; DESIGN.md does not
-  document a code-level fix here because none was needed or shipped —
-  see git history around this note if a software AGC/limiter is ever
-  revisited.
+  empirically after first ruling out a related theory: sounddevice/PortAudio
+  cannot request any WASAPI stream category at all (confirmed via raw
+  `IAudioClient2::SetClientProperties` COM calls) — an initial A/B test of
+  `AudioCategory_Communications` and `AudioCategory_Speech` against identical
+  synthetic noise showed no measurable difference, but that test's category
+  property may simply not have taken effect (no independent way to verify it
+  at the time). A later, WinRT-`AudioCaptureEffectsManager`-verified check
+  confirmed `AudioCategory_Speech` genuinely does attach
+  AEC/NoiseSuppression/AGC on this hardware that the default category never
+  gets — see DESIGN.md §7.1's deviation note for the full story, including
+  the mixed lab-test evidence for whether it actually helps in practice.
+  `scriba/audio/wasapi_speech.py` now requests this category by default
+  (`audio.wasapi_speech_category`, opt-out via config); the mic-gain finding
+  above remains a separate, real, mundane fix in its own right regardless of
+  that flag.

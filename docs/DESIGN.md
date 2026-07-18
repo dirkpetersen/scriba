@@ -298,6 +298,36 @@ then describes only the *final* reconciliation pass at utterance end.
 - Each device gets a **pre-roll ring buffer** of `vad.pre_roll_ms` (default
   400 ms) so the first syllable isn't clipped when VAD triggers.
 
+- **Deviation (`audio.wasapi_speech_category`, default `true`):** sounddevice/
+  PortAudio has no way to request a WASAPI stream category at all (confirmed
+  via its `WasapiSettings` source -- only `exclusive`/`auto_convert`/
+  `explicit_sample_format` are exposed), so every device it opens gets
+  whatever the *default* (uncategorized) audio-engine graph provides.
+  Querying the WinRT `AudioCaptureEffectsManager` on the dev machine showed
+  that requesting `AudioCategory_Speech` gets the driver to attach
+  AcousticEchoCancellation + NoiseSuppression + AutomaticGainControl, while
+  the default/`Communications` categories get none of those. `DEEP_NOISE_SUPPRESSION`
+  ("Windows Studio Effects"/Voice Focus) is not available on this hardware's
+  driver at all -- a real dead end, not just unresolved.
+  `scriba/audio/wasapi_speech.py` opens WASAPI devices directly via a raw
+  `IAudioClient2`/`IAudioCaptureClient` COM path (built on `pycaw`'s existing
+  `IMMDeviceEnumerator`/`IAudioClient` bindings, extended with the two
+  interfaces pycaw doesn't wrap) and calls `SetClientProperties` with
+  `eCategory = AudioCategory_Speech` before `Initialize`. `AudioCapture._open_device`
+  tries this path first per-device when the config flag is on and a WASAPI
+  host-API entry exists, falling back to the sounddevice path unchanged on
+  any failure -- so worst case for any given device is no different from
+  before. Shipped default-on despite mixed lab evidence: a synthetic
+  SAPI-speech + pink-noise test via WinRT `MediaCapture` showed +31% clearer
+  recovered speech (amplitude-normalized cross-correlation, to control for
+  AGC's gain effect), but the same test against the production raw-COM
+  implementation showed the opposite (-44%) with also a 10x swing in the
+  sounddevice baseline's raw RMS between otherwise-identical runs -- strong
+  evidence that speaker-playback-loopback lab testing on this laptop is too
+  noisy a proxy for the real problem (background noise while driving) to
+  trust either result. Judge this one by real dictation quality in the field,
+  not another synthetic benchmark.
+
 ### 7.2 Mic arbiter + VAD + segmentation (`scriba/detect/`)
 
 **Why an arbiter:** multiple live mics will all hear the same speech. Exactly
