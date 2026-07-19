@@ -335,3 +335,53 @@ def test_open_device_skips_wasapi_when_entry_not_wasapi(monkeypatch):
     cap._open_device("dev1", _NON_WASAPI_ENTRY)
 
     assert cap._streams["dev1"] == "SD_STREAM"
+
+
+# --- _close_disabled_devices: narrowing the Microphone menu to one device --
+
+
+def test_close_disabled_devices_closes_streams_no_longer_enabled(monkeypatch, fake_sounddevice):
+    cap = _make_capture(wasapi_speech_category=False)
+    closed = []
+    cap._streams = {
+        _device_id("Laptop Mic"): "STREAM_A",
+        _device_id("USB Headset"): "STREAM_B",
+    }
+    monkeypatch.setattr(cap, "_close_device", lambda device_id: closed.append(device_id))
+
+    cap._config.audio.enabled_devices = ["USB Headset"]
+    cap._close_disabled_devices()
+
+    assert closed == [_device_id("Laptop Mic")]
+
+
+def test_close_disabled_devices_noop_when_all_enabled(monkeypatch, fake_sounddevice):
+    cap = _make_capture(wasapi_speech_category=False)
+    cap._streams = {_device_id("Laptop Mic"): "STREAM_A"}
+    monkeypatch.setattr(cap, "_close_device", lambda device_id: pytest.fail("should not close"))
+
+    cap._config.audio.enabled_devices = []  # empty = all enabled
+    cap._close_disabled_devices()
+
+
+def test_close_disabled_devices_ignores_devices_it_cant_place(monkeypatch, fake_sounddevice):
+    # a device id not matching any currently-present device is handled by
+    # _drop_missing_devices, not this method.
+    cap = _make_capture(wasapi_speech_category=False)
+    cap._streams = {"unknown-id": "STREAM_X"}
+    monkeypatch.setattr(cap, "_close_device", lambda device_id: pytest.fail("should not close"))
+
+    cap._config.audio.enabled_devices = ["USB Headset"]
+    cap._close_disabled_devices()
+
+
+def test_refresh_devices_calls_open_drop_and_close(monkeypatch):
+    cap = _make_capture(wasapi_speech_category=False)
+    calls = []
+    monkeypatch.setattr(cap, "_open_matching_devices", lambda: calls.append("open"))
+    monkeypatch.setattr(cap, "_drop_missing_devices", lambda: calls.append("drop"))
+    monkeypatch.setattr(cap, "_close_disabled_devices", lambda: calls.append("close"))
+
+    cap.refresh_devices()
+
+    assert calls == ["open", "drop", "close"]

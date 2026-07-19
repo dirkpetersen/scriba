@@ -184,10 +184,17 @@ class ScribaApp(QObject):
         self._injector = WindowsInjector(config.inject)
         self._hotkeys = HotkeyManager(config.hotkeys)
 
-        self.tray = ScribaTray(config.general)
+        enabled_devices = config.audio.enabled_devices
+        current_microphone = enabled_devices[0] if enabled_devices else ""
+        self.tray = ScribaTray(
+            config.general,
+            microphone_devices=[d.name for d in self._capture.list_devices()],
+            current_microphone=current_microphone,
+        )
         self.tray.enabled_changed.connect(self._on_enabled_changed)
         self.tray.mode_changed.connect(self._on_mode_changed)
         self.tray.language_changed.connect(self._on_language_changed)
+        self.tray.microphone_changed.connect(self._on_microphone_changed)
         self.tray.quit_requested.connect(self._on_quit_requested)
 
         self._provision_progress.connect(self._on_provision_progress)
@@ -206,6 +213,14 @@ class ScribaApp(QObject):
         self._idle_unload_timer.setInterval(60_000)
         self._idle_unload_timer.timeout.connect(self._check_idle_unload)
         self._idle_unload_timer.start()
+
+        # Devices are dynamic (hot-plug, DESIGN §7.1), unlike Mode/Language --
+        # keep the tray's Microphone submenu in sync with what's actually
+        # available, matching AudioCapture's own poll_interval_s cadence.
+        self._microphone_menu_timer = QTimer(self)
+        self._microphone_menu_timer.setInterval(3_000)
+        self._microphone_menu_timer.timeout.connect(self._refresh_microphone_menu)
+        self._microphone_menu_timer.start()
 
     # --- lifecycle -----------------------------------------------------
 
@@ -388,6 +403,17 @@ class ScribaApp(QObject):
     def _on_mode_changed(self, mode: str) -> None:
         self._config.general.mode = mode
         save_config(self._config)
+
+    def _on_microphone_changed(self, value: str) -> None:
+        # "" (ALL_MICROPHONES_VALUE) -> [] means "all enabled" (DESIGN §7.1);
+        # a specific device name -> a single-item allow-list.
+        self._config.audio.enabled_devices = [value] if value else []
+        save_config(self._config)
+        self._capture.refresh_devices()
+
+    def _refresh_microphone_menu(self) -> None:
+        names = [d.name for d in self._capture.list_devices()]
+        self.tray.set_microphone_devices(names)
 
     def _on_language_changed(self, language: str) -> None:
         self._config.general.language = language

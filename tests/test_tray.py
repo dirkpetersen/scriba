@@ -134,3 +134,59 @@ def test_set_mode_checked_updates_menu_without_signal(tray):
     assert tray._mode_actions["wake_word"].isChecked()
 
 
+def test_microphone_menu_defaults_to_all_microphones(tray):
+    assert tray._microphone_actions[""].isChecked()
+
+
+@pytest.fixture
+def tray_with_devices(qapp):
+    from scriba.ui.tray import ScribaTray
+
+    instance = ScribaTray(
+        GeneralConfig(mode="toggle", language="en"),
+        microphone_devices=["Laptop Mic", "USB Headset"],
+    )
+    yield instance
+    instance.deleteLater()
+
+
+def test_microphone_menu_lists_all_plus_each_device(tray_with_devices):
+    assert set(tray_with_devices._microphone_actions) == {"", "Laptop Mic", "USB Headset"}
+    assert tray_with_devices._microphone_actions[""].isChecked()
+
+
+def test_microphone_menu_selection_emits_microphone_changed(tray_with_devices):
+    seen = []
+    tray_with_devices.microphone_changed.connect(seen.append)
+
+    tray_with_devices._microphone_actions["USB Headset"].trigger()
+
+    assert seen == ["USB Headset"]
+
+
+def test_set_microphone_checked_updates_menu_without_signal(tray_with_devices):
+    seen = []
+    tray_with_devices.microphone_changed.connect(seen.append)
+
+    tray_with_devices.set_microphone_checked("Laptop Mic")
+
+    assert seen == []
+    assert tray_with_devices._microphone_actions["Laptop Mic"].isChecked()
+
+
+def test_set_microphone_devices_rebuild_preserves_current_selection(tray_with_devices):
+    tray_with_devices.set_microphone_checked("USB Headset")
+
+    tray_with_devices.set_microphone_devices(["Laptop Mic", "USB Headset", "Bluetooth Mic"])
+
+    assert tray_with_devices._microphone_actions["USB Headset"].isChecked()
+    assert not tray_with_devices._microphone_actions["Bluetooth Mic"].isChecked()
+
+
+def test_set_microphone_devices_can_change_current_selection(tray_with_devices):
+    tray_with_devices.set_microphone_devices(["Laptop Mic", "USB Headset"], current="USB Headset")
+
+    assert tray_with_devices._microphone_actions["USB Headset"].isChecked()
+    assert not tray_with_devices._microphone_actions[""].isChecked()
+
+

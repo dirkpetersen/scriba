@@ -633,6 +633,18 @@ PySide6 throughout; the Qt event loop is the main thread.
     only ever affects icon *position*, never functionality. Called ~3s after
     `tray.show()` since Windows registers the entry lazily; persists across
     future launches once it succeeds once.
+  - **Deviation (implemented, user request):** a **Microphone** submenu
+    (single exclusive choice, same style as Mode/Language) was added ahead of
+    the full Audio settings tab below -- "All microphones" (default,
+    `audio.enabled_devices = []`) plus one entry per currently-detected input
+    device; picking one narrows `enabled_devices` to just that device.
+    Rebuilt from `AudioCapture.list_devices()` on the same ~3s cadence as its
+    own hot-plug poll, since (unlike Mode/Language) the device list is
+    dynamic. `AudioCapture._close_disabled_devices()` was added alongside
+    this so a device that's already open gets closed the moment it's no
+    longer in `enabled_devices`, instead of only ever reacting to newly
+    *enabled* devices. No per-device level meters or multi-select checkboxes
+    yet -- still deferred to the Audio settings tab (M3).
 - **Settings window** (opened on demand, closable without quitting):
   - *Audio*: device list with enable checkboxes + live level meters, per-device priority
   - *Model*: read-only display of the active model (derived from Language, see above),

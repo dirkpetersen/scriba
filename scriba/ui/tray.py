@@ -73,6 +73,11 @@ _LANGUAGE_MENU_ITEMS = [
 # vs. large-v3-turbo (multilingual) to be derived from the language, not
 # independently selectable -- see scriba.stt.language.model_for_language.
 
+# Sentinel for "all microphones" (matches AudioConfig.enabled_devices == []
+# meaning "all enabled" -- see scriba/audio/capture.py's list_devices()).
+ALL_MICROPHONES_VALUE = ""
+_ALL_MICROPHONES_LABEL = "All microphones"
+
 
 def state_color(state: TrayState, *, dim: bool = False) -> str:
     """Pure state -> hex color lookup; `dim` returns the blink's off-phase shade."""
@@ -121,9 +126,16 @@ class ScribaTray(QSystemTrayIcon):
     enabled_changed = Signal(bool)
     mode_changed = Signal(str)
     language_changed = Signal(str)
+    microphone_changed = Signal(str)
     quit_requested = Signal()
 
-    def __init__(self, general: GeneralConfig | None = None, parent=None) -> None:
+    def __init__(
+        self,
+        general: GeneralConfig | None = None,
+        parent=None,
+        microphone_devices: list[str] | None = None,
+        current_microphone: str = ALL_MICROPHONES_VALUE,
+    ) -> None:
         general = general or GeneralConfig()
         self._state = TrayState.DISABLED
         self._blink_on = True
@@ -145,6 +157,11 @@ class ScribaTray(QSystemTrayIcon):
             general.language,
             self._on_language_triggered,
         )
+        self._microphone_submenu = self._menu.addMenu("Microphone")
+        self._microphone_group: QActionGroup | None = None
+        self._microphone_actions: dict[str, QAction] = {}
+        self._microphone_value = current_microphone
+        self.set_microphone_devices(microphone_devices or [], current_microphone)
         self._menu.addSeparator()
         open_log_action = QAction("Open log", self._menu)
         open_log_action.triggered.connect(self._open_log_dir)
@@ -197,6 +214,41 @@ class ScribaTray(QSystemTrayIcon):
 
     def _on_language_triggered(self, value: str) -> None:
         self.language_changed.emit(value)
+
+    def _on_microphone_triggered(self, value: str) -> None:
+        self.microphone_changed.emit(value)
+
+    def set_microphone_devices(self, names: list[str], current: str | None = None) -> None:
+        """(Re)builds the Microphone submenu from the current device list.
+
+        Called again whenever hot-plug changes what's available (devices are
+        dynamic, unlike Mode/Language) -- rebuilds from scratch rather than
+        diffing, since this is just a handful of menu actions.
+        """
+        if current is not None:
+            self._microphone_value = current
+        self._microphone_submenu.clear()
+        group = QActionGroup(self._microphone_submenu)
+        group.setExclusive(True)
+        actions: dict[str, QAction] = {}
+        items = [(ALL_MICROPHONES_VALUE, _ALL_MICROPHONES_LABEL)] + [(n, n) for n in names]
+        for value, label in items:
+            action = QAction(label, self._microphone_submenu, checkable=True)
+            action.setChecked(value == self._microphone_value)
+            action.triggered.connect(
+                lambda checked=False, v=value: self._on_microphone_triggered(v)
+            )
+            group.addAction(action)
+            self._microphone_submenu.addAction(action)
+            actions[value] = action
+        self._microphone_group = group
+        self._microphone_actions = actions
+
+    def set_microphone_checked(self, name: str) -> None:
+        self._microphone_value = name
+        action = self._microphone_actions.get(name)
+        if action is not None:
+            action.setChecked(True)
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:

@@ -205,11 +205,20 @@ class AudioCapture:
     def list_devices(self) -> list[DeviceInfo]:
         return list_devices(self._config.audio.enabled_devices)
 
+    def refresh_devices(self) -> None:
+        """Re-scans devices against the current config right away, instead of
+        waiting for the next hot-plug poll tick (e.g. right after the tray's
+        Microphone menu narrows/widens `enabled_devices`)."""
+        self._open_matching_devices()
+        self._drop_missing_devices()
+        self._close_disabled_devices()
+
     def _poll_loop(self) -> None:
         while not self._stop_event.wait(self._poll_interval_s):
             try:
                 self._open_matching_devices()
                 self._drop_missing_devices()
+                self._close_disabled_devices()
             except Exception:
                 logger.exception("device hot-plug poll failed")
 
@@ -229,6 +238,23 @@ class AudioCapture:
             for device_id in list(self._streams):
                 if device_id not in present_ids:
                     logger.warning("input device %s disappeared, closing stream", device_id)
+                    self._close_device(device_id)
+
+    def _close_disabled_devices(self) -> None:
+        """Closes streams for devices that are still present but no longer in
+        `enabled_devices` (e.g. the tray's Microphone menu narrowed to one
+        device) -- `_open_matching_devices` only ever opens newly-enabled
+        devices, it never closes ones that become disabled while already open.
+        """
+        enabled_devices = self._config.audio.enabled_devices
+        if not enabled_devices:
+            return  # empty list means "all enabled" -- nothing to close
+        id_to_name = {_device_id(name): name for name in _best_input_entries()}
+        with self._lock:
+            for device_id in list(self._streams):
+                name = id_to_name.get(device_id)
+                if name is not None and name not in enabled_devices:
+                    logger.info("input device %r no longer enabled, closing stream", name)
                     self._close_device(device_id)
 
     def _open_device(self, device_id: str, entry: dict) -> None:
